@@ -1,1 +1,2 @@
-main_sources = files('main.c')
+subdir('processes')
+subdir('common')

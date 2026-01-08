@@ -1,0 +1,1 @@
+common_sources += files('ipc.c')
