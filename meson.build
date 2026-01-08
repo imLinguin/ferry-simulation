@@ -10,20 +10,21 @@ include = [include_directories('include')]
 
 common_sources = []
 main_sources = []
-ferry_capitan_sources = []
+ferry_manager_sources = []
 passenger_sources = []
-port_capitan_sources = []
+port_manager_sources = []
 
 subdir('src')
-if get_option('enable-tests')
-  subdir('tests')
-endif
 
 common_lib = library(
   'ferry-common',
   common_sources,
   include_directories: include
 )
+
+if get_option('enable-tests')
+  subdir('tests')
+endif
 
 main_exe = executable(
   'ferry-simulation',
@@ -34,16 +35,16 @@ main_exe = executable(
 )
 
 ferry_capitan_exe = executable(
-  'ferry-capitan',
-  ferry_capitan_sources,
+  'ferry-manager',
+  ferry_manager_sources,
   include_directories: include,
   install : true,
   link_with: common_lib
 )
 
-port_capitan_exe = executable(
-  'port-capitan',
-  port_capitan_sources,
+port_manager_exe = executable(
+  'port-manager',
+  port_manager_sources,
   include_directories: include,
   install : true,
   link_with: common_lib

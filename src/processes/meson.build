@@ -1,4 +1,4 @@
 main_sources += files('main.c')
-ferry_capitan_sources += files('ferry_capitan.c')
+ferry_manager_sources += files('ferry_manager.c')
 passenger_sources += files('passenger.c')
-port_capitan_sources += files('port_capitan.c')
+port_manager_sources += files('port_manager.c')

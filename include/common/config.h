@@ -1,5 +1,5 @@
-#ifndef FERRY_PROJECT_CONFIG_H
-#define FERRY_PROJECT_CONFIG_H
+#ifndef FERRY_COMMON_CONFIG_H
+#define FERRY_COMMON_CONFIG_H
 
 #define SECURITY_STATIONS 3
 #define FERRY_CAPACITY 50
@@ -11,6 +11,5 @@
 #define PASSENGER_BOARDING_TIME 2
 
 #define LOG_FILE "simulation.log"
-#define IPC_ID 0x3219 // 3rd semester, GP02, project nr. 19
 
 #endif

@@ -1,2 +1,2 @@
-subdir('processes')
 subdir('common')
+subdir('processes')

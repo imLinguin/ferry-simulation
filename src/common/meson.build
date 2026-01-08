@@ -1,1 +1,1 @@
-common_sources += files('ipc.c')
+common_sources += files('ipc.c', 'logging.c')
