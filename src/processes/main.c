@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
     key_t sem_security_key;
     key_t sem_ramp_key;
     
+    int log_queue_id;
     int shm_id;
     int sem_state_mutex;
     int sem_security;
@@ -37,8 +38,9 @@ int main(int argc, char **argv) {
     char port_manager_path[255];
     char ferry_manager_path[255];
     char passenger_path[255];
+    char log_queue_arg[16];
 
-    bin_dir = dirname(argv[0]);
+    bin_dir = dirname(strdup(argv[0]));
     memcpy(port_manager_path, bin_dir, strlen(bin_dir));
     memcpy(ferry_manager_path, bin_dir, strlen(bin_dir));
     memcpy(passenger_path, bin_dir, strlen(bin_dir));
@@ -69,6 +71,13 @@ int main(int argc, char **argv) {
     sem_close_if_exists(sem_state_mutex_key);
     sem_close_if_exists(sem_security_key);
     sem_close_if_exists(sem_ramp_key);
+    
+    // Create logger queue
+    log_queue_id = queue_create(log_queue_key);
+    if (log_queue_id == -1) {
+        perror("Failed to create logger queue");
+        return 1;
+    }
     
     // Create shared memory
     shm_id = shm_create(shm_key, sizeof(SharedState));
@@ -149,12 +158,17 @@ int main(int argc, char **argv) {
     
     shm_detach(shared_state);
     
+    // Convert log_queue_id to string for logger process
+    snprintf(log_queue_arg, sizeof(log_queue_arg), "%d", log_queue_id);
+    
     // Initialize logger
     logger_pid = fork();
     if (logger_pid == -1) {
         perror("Logger failed");
+        queue_close(log_queue_id);
+        return 1;
     } else if (logger_pid == 0) {
-        return logger_loop(log_queue_key);
+        return logger_loop(log_queue_id);
     }
 
     // Initialize port manager process
@@ -182,18 +196,15 @@ int main(int argc, char **argv) {
 }
 
 
-int logger_loop(key_t queue_key) {
+int logger_loop(int queue_id) {
     FILE* log_file;
     LogMessage msg;
-    int queue_id;
     int status = 0;
     
     log_file = fopen("./simulation.log", "w");
     if (!log_file) {
         return 1;
     }
-
-    queue_id = queue_create(queue_key);
 
     while (1) {
         if (msgrcv(queue_id, &msg, sizeof(LogMessage), 0, 0) == -1) {
@@ -204,7 +215,6 @@ int logger_loop(key_t queue_key) {
         fprintf(log_file, "[%s_%04d] %s\n", ROLE_NAMES[msg.mtype], msg.identifier, msg.message);
     }
 
-    queue_close(queue_id);
     fflush(log_file);
     fclose(log_file);
 
