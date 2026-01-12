@@ -67,16 +67,6 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
-
-    // Initialize passenger generator
-    passenger_generator = fork();
-    if (passenger_generator == -1) {
-        perror("Passenger generator failed");
-    } else if (passenger_generator == 0) {
-
-        return 0;
-    }
-
     waitpid(manager_pid, NULL, 0);
     waitpid(passenger_generator, NULL, 0);
     waitpid(logger_pid, NULL, 0);
@@ -104,8 +94,7 @@ int logger_loop(key_t queue_key) {
             status = 1;
             break;
         }
-
-        fprintf(log_file, "[%s] %s\n", ROLE_NAMES[msg.role], msg.message);
+        fprintf(log_file, "[%s_%04d] %s\n", ROLE_NAMES[msg.mtype], msg.identifier, msg.message);
     }
 
     queue_close(queue_id);

@@ -10,7 +10,6 @@ typedef enum Role {
 
 typedef struct LogMessage {
     long mtype;
-    Role role;
     int identifier;
     char message[1024];
 
