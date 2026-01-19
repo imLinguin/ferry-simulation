@@ -4,22 +4,13 @@
 #include <sys/msg.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
+#include <errno.h>
 
 #include "common/ipc.h"
 
-// Handle old GLIBC versions that do not have semun defined according to semctl manual
-#if defined(_SEM_SEMUN_UNDEFINED) || !defined(__GLIBC__)
-union semun {
-    int val;
-    struct semid_ds* buf;
-    unsigned short* array;
-    struct seminfo* __buf;
-};
-#endif
-
 
 int queue_create(key_t queue_key) {
-    return msgget(queue_key, IPC_CREAT | 0600);
+    return msgget(queue_key, IPC_CREAT | IPC_EXCL | 0600);
 }
 
 int queue_open(key_t queue_key) {
@@ -38,12 +29,12 @@ void queue_close_if_exists(key_t queue_key) {
 }
 
 int sem_create(key_t sem_key, int semaphore_count, const unsigned short* initial_values) {
-    int sem_id = semget(sem_key, semaphore_count, IPC_CREAT | 0600);
+    int sem_id = semget(sem_key, semaphore_count, IPC_CREAT | IPC_EXCL | 0600);
     if (sem_id == -1) return -1;
 
     if (initial_values != NULL) {
         union semun arg;
-        arg.array = (unsigned short*)initial_values;
+        arg.array = initial_values;
         if (semctl(sem_id, 0, SETALL, arg) == -1) {
             semctl(sem_id, 0, IPC_RMID);
             return -1;
@@ -53,8 +44,8 @@ int sem_create(key_t sem_key, int semaphore_count, const unsigned short* initial
     return sem_id;
 }
 
-int sem_open(key_t sem_key) {
-    return semget(sem_key, 0, 0);
+int sem_open(key_t sem_key, int semaphore_count) {
+    return semget(sem_key, semaphore_count, IPC_CREAT | 0600);
 }
 
 int sem_close(int sem_id) {
@@ -62,20 +53,46 @@ int sem_close(int sem_id) {
 }
 
 void sem_close_if_exists(key_t sem_key) {
-    int sem_id = sem_open(sem_key);
+    int sem_id = semget(sem_key, 0, 0);
     if (sem_id != -1) {
         sem_close(sem_id);
     }
 }
 
-int sem_wait_single(int sem_id, unsigned short sem_num) {
+int sem_wait_single_noundo(int sem_id, unsigned short sem_num) {
+    int retval;
     struct sembuf op = {sem_num, -1, 0};
-    return semop(sem_id, &op, 1);
+    while ((retval = semop(sem_id, &op, 1)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
+}
+
+int sem_wait_single(int sem_id, unsigned short sem_num) {
+    int retval;
+    struct sembuf op = {sem_num, -1, SEM_UNDO};
+    while ((retval = semop(sem_id, &op, 1)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
+}
+
+int sem_signal_single_noundo(int sem_id, unsigned short sem_num) {
+    int retval;
+    struct sembuf op = {sem_num, 1, SEM_UNDO};
+    while ((retval = semop(sem_id, &op, 1)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
 }
 
 int sem_signal_single(int sem_id, unsigned short sem_num) {
-    struct sembuf op = {sem_num, 1, 0};
-    return semop(sem_id, &op, 1);
+    int retval;
+    struct sembuf op = {sem_num, 1, SEM_UNDO};
+    while ((retval = semop(sem_id, &op, 1)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
 }
 
 int shm_create(key_t shm_key, size_t size) {

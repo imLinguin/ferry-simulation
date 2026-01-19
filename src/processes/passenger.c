@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #include "common/config.h"
 #include "common/state.h"
@@ -14,50 +15,48 @@
 int main(int argc, char** argv) {
     int passenger_id;
     int log_queue = -1;
-    int shm_id;
+    int queue_security;
     int sem_state_mutex;
     int sem_security;
     int sem_ramp;
-    SharedState* shared_state;
+    int shm_id;
     PassengerTicket ticket;
-    
+    SecurityMessage security_message;
+    SharedState *shm;
+
     key_t log_queue_key;
-    key_t shm_key;
+    key_t key_security;
     key_t sem_state_mutex_key;
     key_t sem_security_key;
     key_t sem_ramp_key;
+    key_t shm_key;
     
     if (argc < 3) return 1;
     
     passenger_id = atoi(argv[2]);
     
     // Open IPC resources
-    log_queue_key = ftok(argv[1], 'L');
-    shm_key = ftok(argv[1], 'S');
-    sem_state_mutex_key = ftok(argv[1], 'M');
-    sem_security_key = ftok(argv[1], 'E');
-    sem_ramp_key = ftok(argv[1], 'R');
+    log_queue_key = ftok(argv[1], IPC_KEY_LOG_ID);
+    key_security = ftok(argv[1], IPC_KEY_QUEUE_SECURITY_ID);
+    sem_security_key = ftok(argv[1], IPC_KEY_SEM_SECURITY_ID);
+    sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
+    sem_ramp_key = ftok(argv[1], IPC_KEY_SEM_RAMP_ID);
+    shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     
     if (log_queue_key != -1) {
         log_queue = queue_open(log_queue_key);
     }
     
+    queue_security = queue_open(key_security);
+    sem_state_mutex = sem_open(sem_state_mutex_key, 1);
+    sem_security = sem_open(sem_security_key, 1);
+    sem_ramp = sem_open(sem_ramp_key, 1);
+    
     shm_id = shm_open(shm_key);
-    if (shm_id == -1) {
-        return 1;
-    }
-    
-    shared_state = (SharedState*)shm_attach(shm_id);
-    if (shared_state == (void*)-1) {
-        return 1;
-    }
-    
-    sem_state_mutex = sem_open(sem_state_mutex_key);
-    sem_security = sem_open(sem_security_key);
-    sem_ramp = sem_open(sem_ramp_key);
-    
-    if (sem_state_mutex == -1 || sem_security == -1 || sem_ramp == -1) {
-        shm_detach(shared_state);
+    shm = shm_attach(shm_id);
+
+    if (sem_state_mutex == -1 || sem_security == -1 || sem_ramp == -1 || log_queue == -1) {
+        perror("Failed to init passenger");
         return 1;
     }
     
@@ -69,83 +68,54 @@ int main(int argc, char** argv) {
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
     
     log_message_with_id(log_queue, ROLE, "Passenger created", passenger_id);
-    
-    // Check-in: wait for port to be open
-    while (!shared_state->port_open) {
-        sleep(1);
-    }
     ticket.state = PASSENGER_BAG_CHECK;
     log_message_with_id(log_queue, ROLE, "At baggage check", passenger_id);
     
-    // Baggage check: find a ferry that can fit this baggage
+    // Baggage check: is current ferry suitable for us?
     int valid_ferry = -1;
-    sem_wait_single(sem_state_mutex, 0);
-    for (int i = 0; i < FERRY_COUNT; i++) {
-        if (ticket.bag_weight <= shared_state->ferries[i].baggage_limit) {
-            valid_ferry = i;
-            break;
+    char msg[255] = "";
+    while(1) {
+        sem_wait_single(sem_state_mutex, 0);
+        if (shm->current_ferry_id != -1) {
+            if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
+                log_message_with_id(log_queue, ROLE, "Baggage meets the limit", passenger_id);
+                sem_signal_single(sem_state_mutex, 0);
+                break;
+            }
+            snprintf(msg, 255, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
+            log_message_with_id(log_queue, ROLE, msg, passenger_id);
         }
+        sem_signal_single(sem_state_mutex, 0);
+        sleep(1);
     }
-    sem_signal_single(sem_state_mutex, 0);
-    
-    if (valid_ferry == -1) {
-        log_message_with_id(log_queue, ROLE, "Baggage too heavy, rejected", passenger_id);
-        shm_detach(shared_state);
-        return 0;
-    }
+    shm_detach(shm);
     
     ticket.state = PASSENGER_WAITING;
     log_message_with_id(log_queue, ROLE, "Passed baggage check", passenger_id);
     
     // Security check: use semaphore to ensure gender constraint
     int assigned_station = -1;
-    
-    for (int attempt = 0; attempt < 3; attempt++) {
-        sem_wait_single(sem_state_mutex, 0);
-        
-        // Find an available security station with matching gender or empty
-        for (int i = 0; i < SECURITY_STATIONS; i++) {
-            if (shared_state->stations[i].occupancy < SECURITY_STATION_CAPACITY) {
-                if (shared_state->stations[i].occupancy == 0 || 
-                    shared_state->stations[i].gender == ticket.gender) {
-                    assigned_station = i;
-                    break;
-                }
-            }
+
+    log_message_with_id(log_queue, ROLE, "Waiting for security", passenger_id);
+    sem_wait_single(sem_security, 0);
+    security_message.mtype = SECURITY_MESSAGE_MANAGER_ID;
+    security_message.gender = ticket.gender;
+    security_message.pid = getpid();
+    security_message.passenger_id = passenger_id;
+    while(msgsnd(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), 0) == -1) {
+        if (errno != EINTR) {
+            log_message_with_id(log_queue, ROLE, "[ERROR] Failed to put messege to security queue", passenger_id);
+            goto cleanup;
         }
-        
-        sem_signal_single(sem_state_mutex, 0);
-        
-        if (assigned_station != -1) break;
-        sleep(1);
     }
-    
-    if (assigned_station == -1) {
-        log_message_with_id(log_queue, ROLE, "Security check timeout, frustrated", passenger_id);
-        shm_detach(shared_state);
-        return 1;
+    log_message_with_id(log_queue, ROLE, "Requested security station allocation", passenger_id);
+    while(msgrcv(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), getpid(), 0) == -1) {
+        if (errno != EINTR) {
+            log_message_with_id(log_queue, ROLE, "[ERROR] Failed to get messege from security queue", passenger_id);
+            goto cleanup;
+        }
     }
-    
-    log_message_with_id(log_queue, ROLE, "At security station", passenger_id);
-    
-    // Enter security station
-    sem_wait_single(sem_state_mutex, 0);
-    shared_state->stations[assigned_station].occupancy++;
-    if (shared_state->stations[assigned_station].occupancy == 1) {
-        shared_state->stations[assigned_station].gender = ticket.gender;
-    }
-    sem_signal_single(sem_state_mutex, 0);
-    
-    // Simulate security check
-    sleep(PASSENGER_SECURITY_TIME);
-    
-    // Exit security station
-    sem_wait_single(sem_state_mutex, 0);
-    shared_state->stations[assigned_station].occupancy--;
-    if (shared_state->stations[assigned_station].occupancy == 0) {
-        shared_state->stations[assigned_station].gender = -1;
-    }
-    sem_signal_single(sem_state_mutex, 0);
+    sem_signal_single(sem_security, 0);
     
     ticket.state = PASSENGER_BOARDING;
     log_message_with_id(log_queue, ROLE, "Passed security, waiting to board", passenger_id);
@@ -155,26 +125,19 @@ int main(int argc, char** argv) {
     
     log_message_with_id(log_queue, ROLE, "Boarding ferry", passenger_id);
     
-    // Update ferry state
-    sem_wait_single(sem_state_mutex, 0);
-    shared_state->ramp.occupancy++;
-    shared_state->ferries[valid_ferry].passenger_count++;
-    shared_state->ferries[valid_ferry].baggage_weight_total += ticket.bag_weight;
-    sem_signal_single(sem_state_mutex, 0);
-    
     // Simulate boarding time
     sleep(PASSENGER_BOARDING_TIME);
-    
-    // Release ramp slot
-    sem_wait_single(sem_state_mutex, 0);
-    shared_state->ramp.occupancy--;
-    sem_signal_single(sem_state_mutex, 0);
-    
+
     sem_signal_single(sem_ramp, 0);
     
     ticket.state = PASSENGER_BOARDED;
     log_message_with_id(log_queue, ROLE, "Boarded successfully", passenger_id);
     
-    shm_detach(shared_state);
+cleanup:
+    queue_close(log_queue);
+    queue_close(queue_security);
+    sem_close(sem_state_mutex);
+    sem_close(sem_security);
+    sem_close(sem_ramp);
     return 0;
 }

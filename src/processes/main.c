@@ -14,30 +14,31 @@
 #include "common/ipc.h"
 #include <stdlib.h>
 
-void handle_signal(int signal) {}
-
 int main(int argc, char **argv) {
     char* bin_dir;
     pid_t manager_pid;
     pid_t logger_pid;
     
-    key_t control_queue;
-    key_t log_queue_key;
+    key_t queue_log_key;
+    key_t queue_security_key;
     key_t shm_key;
     key_t sem_state_mutex_key;
     key_t sem_security_key;
     key_t sem_ramp_key;
+    key_t sem_current_ferry_key;
     
     int log_queue_id;
+    int security_queue_id;
     int shm_id;
     int sem_state_mutex;
     int sem_security;
     int sem_ramp;
+    int sem_current_ferry;
     SharedState* shared_state;
 
-    char port_manager_path[255];
-    char ferry_manager_path[255];
-    char passenger_path[255];
+    char port_manager_path[255] = "";
+    char ferry_manager_path[255] = "";
+    char passenger_path[255] = "";
     char log_queue_arg[16];
 
     bin_dir = dirname(strdup(argv[0]));
@@ -48,40 +49,49 @@ int main(int argc, char **argv) {
     strcat(ferry_manager_path, "/ferry-manager");
     strcat(passenger_path, "/passenger");
     
-    signal(SIGINT, handle_signal);
+    // TODO: Use sigaction
+    // signal(SIGINT, SIG_IGN);
     
     // Initialize IPC keys
-    control_queue = ftok(argv[0], 'C');
-    log_queue_key = ftok(argv[0], 'L');
-    shm_key = ftok(argv[0], 'S');
-    sem_state_mutex_key = ftok(argv[0], 'M');
-    sem_security_key = ftok(argv[0], 'E');
-    sem_ramp_key = ftok(argv[0], 'R');
+    queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
+    queue_security_key = ftok(argv[0], IPC_KEY_QUEUE_SECURITY_ID);
+    shm_key = ftok(argv[0], IPC_KEY_SHM_ID);
+    sem_state_mutex_key = ftok(argv[0], IPC_KEY_SEM_STATE_ID);
+    sem_security_key = ftok(argv[0], IPC_KEY_SEM_SECURITY_ID);
+    sem_ramp_key = ftok(argv[0], IPC_KEY_SEM_RAMP_ID);
+    sem_current_ferry_key = ftok(argv[0], IPC_KEY_SEM_CURRENT_FERRY);
     
-    if (control_queue == -1 || log_queue_key == -1 || shm_key == -1 ||
-        sem_state_mutex_key == -1 || sem_security_key == -1 || sem_ramp_key == -1) {
+    if (queue_log_key == -1 || shm_key == -1 || queue_security_key == 1 ||
+        sem_state_mutex_key == -1 || sem_security_key == -1 || sem_ramp_key == -1 || sem_current_ferry_key == -1) {
         perror("Failed to initialize IPC keys");
         return 1;
     }
     
     // Clean up existing IPC resources
-    queue_close_if_exists(control_queue);
-    queue_close_if_exists(log_queue_key);
+    queue_close_if_exists(queue_log_key);
+    queue_close_if_exists(queue_security_key);
+
     shm_close_if_exists(shm_key);
+
     sem_close_if_exists(sem_state_mutex_key);
     sem_close_if_exists(sem_security_key);
     sem_close_if_exists(sem_ramp_key);
-    
-    // Create logger queue
-    log_queue_id = queue_create(log_queue_key);
-    if (log_queue_id == -1) {
+    sem_close_if_exists(sem_current_ferry_key);
+
+    printf("Initializing queues\n");
+    // Create queues
+    if ((log_queue_id = queue_create(queue_log_key)) == -1) {
         perror("Failed to create logger queue");
         return 1;
     }
+    if ((security_queue_id = queue_create(queue_security_key)) == -1) {
+        perror("Failed to create security queue");
+        return 1;
+    }
     
+    printf("Initializing shm\n");
     // Create shared memory
-    shm_id = shm_create(shm_key, sizeof(SharedState));
-    if (shm_id == -1) {
+    if ((shm_id = shm_create(shm_key, sizeof(SharedState))) == -1) {
         perror("Failed to create shared memory");
         return 1;
     }
@@ -95,15 +105,8 @@ int main(int argc, char **argv) {
     
     // Initialize shared state
     shared_state->port_open = 1;
-    shared_state->ramp.active_ferry_id = -1;
-    shared_state->ramp.occupancy = 0;
-    shared_state->vip_queue.head = 0;
-    shared_state->vip_queue.tail = 0;
-    shared_state->vip_queue.size = 0;
-    shared_state->regular_queue.head = 0;
-    shared_state->regular_queue.tail = 0;
-    shared_state->regular_queue.size = 0;
-    
+    shared_state->current_ferry_id = -1;
+  
     for (int i = 0; i < FERRY_COUNT; i++) {
         shared_state->ferries[i].ferry_id = i;
         shared_state->ferries[i].baggage_limit = FERRY_BAGGAGE_LIMIT_MIN + 
@@ -113,44 +116,42 @@ int main(int argc, char **argv) {
         shared_state->ferries[i].status = FERRY_WAITING_IN_QUEUE;
     }
     
-    for (int i = 0; i < SECURITY_STATIONS; i++) {
-        shared_state->stations[i].occupancy = 0;
-        shared_state->stations[i].gender = -1;
-        shared_state->stations[i].frustration_counter = 0;
-    }
-    
+    printf("Initializing semaphores\n");
     // Create semaphores
     // State mutex: 1 semaphore initialized to 1 (binary mutex)
-    unsigned short state_mutex_init[1] = {1};
-    sem_state_mutex = sem_create(sem_state_mutex_key, 1, state_mutex_init);
-    if (sem_state_mutex == -1) {
+    unsigned short state_mutex_init = 1;
+    if ((sem_state_mutex = sem_create(sem_state_mutex_key, 1, &state_mutex_init)) == -1) {
         perror("Failed to create state mutex semaphore");
         shm_detach(shared_state);
         shm_close(shm_id);
         return 1;
     }
     
-    // Security stations: SECURITY_STATIONS semaphores, each initialized to SECURITY_STATION_CAPACITY
-    unsigned short security_init[SECURITY_STATIONS];
-    for (int i = 0; i < SECURITY_STATIONS; i++) {
-        security_init[i] = SECURITY_STATION_CAPACITY;
-    }
-    sem_security = sem_create(sem_security_key, SECURITY_STATIONS, security_init);
-    if (sem_security == -1) {
-        perror("Failed to create security semaphores");
+    unsigned short security_init = SECURITY_STATIONS * SECURITY_STATION_CAPACITY;
+    if ((sem_security = sem_create(sem_security_key, 1, &security_init)) == -1) {
+        perror("Failed to create security queue semaphore");
         sem_close(sem_state_mutex);
         shm_detach(shared_state);
         shm_close(shm_id);
         return 1;
     }
     
-    // Ramp: 1 counting semaphore initialized to RAMP_CAPACITY
-    unsigned short ramp_init[1] = {RAMP_CAPACITY};
-    sem_ramp = sem_create(sem_ramp_key, 1, ramp_init);
-    if (sem_ramp == -1) {
+    unsigned short ramp_init = 0;
+    if ((sem_ramp = sem_create(sem_ramp_key, 1, &ramp_init)) == -1) {
         perror("Failed to create ramp semaphore");
         sem_close(sem_state_mutex);
         sem_close(sem_security);
+        shm_detach(shared_state);
+        shm_close(shm_id);
+        return 1;
+    }
+
+    unsigned short current_ferry_init = 1;
+    if ((sem_current_ferry = sem_create(sem_current_ferry_key, 1, &current_ferry_init)) == -1) {
+        perror("Failed to create ramp semaphore");
+        sem_close(sem_state_mutex);
+        sem_close(sem_security);
+        sem_close(sem_ramp_key);
         shm_detach(shared_state);
         shm_close(shm_id);
         return 1;
@@ -161,6 +162,7 @@ int main(int argc, char **argv) {
     // Convert log_queue_id to string for logger process
     snprintf(log_queue_arg, sizeof(log_queue_arg), "%d", log_queue_id);
     
+    printf("Staring logger\n");
     // Initialize logger
     logger_pid = fork();
     if (logger_pid == -1) {
@@ -172,6 +174,7 @@ int main(int argc, char **argv) {
     }
 
     // Initialize port manager process
+    printf("Staring port manager\n");
     manager_pid = fork();
     if (manager_pid == -1) {
         perror("Manager start failed");
@@ -189,8 +192,8 @@ int main(int argc, char **argv) {
     sem_close(sem_security);
     sem_close(sem_state_mutex);
     shm_close(shm_id);
-    queue_close_if_exists(control_queue);
-    queue_close_if_exists(log_queue_key);
+    queue_close_if_exists(queue_log_key);
+    queue_close_if_exists(queue_security_key);
 
     return 0;
 }
@@ -206,13 +209,16 @@ int logger_loop(int queue_id) {
         return 1;
     }
 
+    printf("Logger start\n");
+
     while (1) {
-        if (msgrcv(queue_id, &msg, sizeof(LogMessage), 0, 0) == -1) {
+        if (msgrcv(queue_id, &msg, sizeof(LogMessage) - sizeof(msg.mtype), 0, 0) == -1) {
             // if (errno == EINTR) continue;
             status = 1;
             break;
         }
-        fprintf(log_file, "[%s_%04d] %s\n", ROLE_NAMES[msg.mtype], msg.identifier, msg.message);
+        printf("[%s_%04d] %s\n", ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
+        fprintf(log_file, "[%s_%04d] %s\n", ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
     }
 
     fflush(log_file);

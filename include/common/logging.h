@@ -1,19 +1,14 @@
 #ifndef FERRY_COMMON_LOGGING_H
 #define FERRY_COMMON_LOGGING_H
 
+#include "common/messages.h"
+
 typedef enum Role {
-    ROLE_PASSENGER,
+    ROLE_PASSENGER = 1,
     ROLE_PORT_MANAGER,
     ROLE_FERRY_MANAGER,
     ROLE_PASSENGER_GENERATOR,
 } Role;
-
-typedef struct LogMessage {
-    long mtype;
-    int identifier;
-    char message[1024];
-
-} LogMessage;
 
 char* ROLE_NAMES[] = {
     "PASSENGER",

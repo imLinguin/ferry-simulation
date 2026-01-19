@@ -36,11 +36,11 @@ int main(int argc, char** argv) {
     signal(SIGUSR2, handle_sigusr2);
 
     // Open IPC resources
-    logger_key = ftok(argv[1], 'L');
-    shm_key = ftok(argv[1], 'S');
-    sem_state_mutex_key = ftok(argv[1], 'M');
-    sem_security_key = ftok(argv[1], 'E');
-    sem_ramp_key = ftok(argv[1], 'R');
+    logger_key = ftok(argv[1], IPC_KEY_LOG_ID);
+    shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
+    sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
+    sem_security_key = ftok(argv[1], IPC_KEY_SEM_SECURITY_ID);
+    sem_ramp_key = ftok(argv[1], IPC_KEY_SEM_RAMP_ID);
     
     if (logger_key != -1) {
         log_queue = queue_open(logger_key);
@@ -58,9 +58,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    sem_state_mutex = sem_open(sem_state_mutex_key);
-    sem_security = sem_open(sem_security_key);
-    sem_ramp = sem_open(sem_ramp_key);
+    sem_state_mutex = sem_open(sem_state_mutex_key, 1);
+    sem_security = sem_open(sem_security_key, 1);
+    sem_ramp = sem_open(sem_ramp_key, 1);
     
     if (sem_state_mutex == -1 || sem_security == -1 || sem_ramp == -1) {
         perror("Port manager: Failed to open semaphores");
@@ -112,35 +112,6 @@ int main(int argc, char** argv) {
     }
     
     log_message_with_id(log_queue, ROLE, "Spawned all ferries and passengers", 0);
-    
-    // Ferry queue management: ensure only one ferry boards at a time
-    int current_boarding_ferry = 0;
-    sem_wait_single(sem_state_mutex, 0);
-    shared_state->ferries[current_boarding_ferry].status = FERRY_BOARDING;
-    shared_state->ramp.active_ferry_id = current_boarding_ferry;
-    sem_signal_single(sem_state_mutex, 0);
-    
-    while (shared_state->port_open) {
-        sem_wait_single(sem_state_mutex, 0);
-        
-        // Check if current ferry has departed
-        if (shared_state->ferries[current_boarding_ferry].status == FERRY_WAITING_IN_QUEUE ||
-            shared_state->ferries[current_boarding_ferry].status == FERRY_DEPARTED) {
-            
-            // Move to next ferry
-            current_boarding_ferry = (current_boarding_ferry + 1) % FERRY_COUNT;
-            
-            // Set next ferry to boarding
-            if (shared_state->ferries[current_boarding_ferry].status == FERRY_WAITING_IN_QUEUE) {
-                shared_state->ferries[current_boarding_ferry].status = FERRY_BOARDING;
-                shared_state->ramp.active_ferry_id = current_boarding_ferry;
-                log_message_with_id(log_queue, ROLE, "Ferry authorized to board", current_boarding_ferry);
-            }
-        }
-        
-        sem_signal_single(sem_state_mutex, 0);
-        sleep(1);
-    }
     
     // Wait for all ferry managers and passengers
     for (int i = 0; i < FERRY_COUNT; i++) {

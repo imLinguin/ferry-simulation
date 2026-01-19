@@ -18,31 +18,11 @@ typedef struct FerryState {
     FerryStatus status;
 } FerryState;
 
-typedef struct SecurityStationState {
-    int occupancy;
-    int gender; /* -1 means empty, 0 male, 1 female */
-    int frustration_counter;
-} SecurityStationState;
-
-typedef struct RampState {
-    int active_ferry_id;
-    int occupancy;
-} RampState;
-
-typedef struct PassengerQueue {
-    int slots[QUEUE_CAPACITY];
-    int head;
-    int tail;
-    int size;
-} PassengerQueue;
 
 typedef struct SharedState {
     int port_open;
+    int current_ferry_id;
     FerryState ferries[FERRY_COUNT];
-    SecurityStationState stations[SECURITY_STATIONS];
-    RampState ramp;
-    PassengerQueue vip_queue;
-    PassengerQueue regular_queue;
 } SharedState;
 
 #endif

@@ -15,6 +15,6 @@ void log_message_with_id(int queue, Role role, const char* message, int identifi
     msg.mtype = (long)role;
     msg.identifier = identifier;
     strcpy(msg.message, message);
-    
-    msgsnd(queue, &msg, sizeof(msg), 0);
+
+    msgsnd(queue, &msg, sizeof(msg) - sizeof(msg.mtype), 0);
 }
