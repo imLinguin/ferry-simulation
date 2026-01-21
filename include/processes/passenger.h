@@ -2,7 +2,7 @@
 #define FERRY_PROCESSES_PASSENGER_H
 
 typedef enum Gender {
-    GENDER_MAN,
+    GENDER_MAN = 1,
     GENDER_WOMAN
 } Gender;
 

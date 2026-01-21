@@ -10,11 +10,13 @@ typedef struct SecurityMessage {
     Gender gender;
     long pid;
     int passenger_id;
+    int frustration;
 } SecurityMessage;
 
 typedef struct LogMessage {
     long mtype;
     int identifier;
+    time_t timestamp;
     char message[1024];
 
 } LogMessage;

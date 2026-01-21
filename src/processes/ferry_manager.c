@@ -69,8 +69,8 @@ int main(int argc, char** argv) {
     
     signal(SIGUSR1, handle_sigusr1);
     
-    log_message_with_id(log_queue, ROLE, "Ferry manager started", ferry_id);
-    log_message_with_id(log_queue, ROLE, "Ferry manager waiting for semaphore", ferry_id);
+    log_message(log_queue, ROLE, ferry_id, "Ferry manager started");
+    log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
     
     // Ferry main loop: board passengers, depart, travel, return
     time_t last_departure = time(NULL);
@@ -79,10 +79,10 @@ int main(int argc, char** argv) {
         sem_wait_single(sem_current_ferry, 0);
         sem_wait_single(sem_state_mutex, 0);
         
-        log_message_with_id(log_queue, ROLE, "Ferry manager updating current ferry state", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry manager updating current ferry state");
         shared_state->current_ferry_id = ferry_id;
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
-        log_message_with_id(log_queue, ROLE, "Ferry is now boarding", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry is now boarding");
         
         sem_signal_single(sem_state_mutex, 0);
         
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
 
         sem_wait_single(sem_state_mutex, 0);
         
-        log_message_with_id(log_queue, ROLE, "Ferry departing", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry departing");
         shared_state->current_ferry_id = -1;
         shared_state->ferries[ferry_id].status = FERRY_DEPARTED;
         
@@ -109,9 +109,9 @@ int main(int argc, char** argv) {
         sem_signal_single(sem_current_ferry, 0);
         
         // Travel
-        log_message_with_id(log_queue, ROLE, "Ferry traveling", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
         sleep(FERRY_TRAVEL_TIME);
-        log_message_with_id(log_queue, ROLE, "Ferry returning", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry returning");
         sleep(FERRY_TRAVEL_TIME);
         
         // Return
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
         shared_state->ferries[ferry_id].passenger_count = 0;
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
         
-        log_message_with_id(log_queue, ROLE, "Ferry returned to queue", ferry_id);
+        log_message(log_queue, ROLE, ferry_id, "Ferry returned to queue");
         
         sem_signal_single(sem_state_mutex, 0);
         

@@ -62,14 +62,14 @@ int main(int argc, char** argv) {
     
     // Initialize passenger ticket
     ticket.state = PASSENGER_CHECKIN;
-    ticket.gender = rand() % 2;
+    ticket.gender = (rand() % 2) + 1;
     ticket.vip = (rand() % 10 < 2) ? 1 : 0;
     ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN + 
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
     
-    log_message_with_id(log_queue, ROLE, "Passenger created", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Passenger created");
     ticket.state = PASSENGER_BAG_CHECK;
-    log_message_with_id(log_queue, ROLE, "At baggage check", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "At baggage check");
     
     // Baggage check: is current ferry suitable for us?
     int valid_ferry = -1;
@@ -78,12 +78,12 @@ int main(int argc, char** argv) {
         sem_wait_single(sem_state_mutex, 0);
         if (shm->current_ferry_id != -1) {
             if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
-                log_message_with_id(log_queue, ROLE, "Baggage meets the limit", passenger_id);
+                log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit");
                 sem_signal_single(sem_state_mutex, 0);
                 break;
             }
             snprintf(msg, 255, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
-            log_message_with_id(log_queue, ROLE, msg, passenger_id);
+            log_message(log_queue, ROLE, passenger_id, msg);
         }
         sem_signal_single(sem_state_mutex, 0);
         sleep(1);
@@ -91,39 +91,40 @@ int main(int argc, char** argv) {
     shm_detach(shm);
     
     ticket.state = PASSENGER_WAITING;
-    log_message_with_id(log_queue, ROLE, "Passed baggage check", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Passed baggage check");
     
     // Security check: use semaphore to ensure gender constraint
     int assigned_station = -1;
 
-    log_message_with_id(log_queue, ROLE, "Waiting for security", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Waiting for security");
     sem_wait_single(sem_security, 0);
     security_message.mtype = SECURITY_MESSAGE_MANAGER_ID;
     security_message.gender = ticket.gender;
     security_message.pid = getpid();
     security_message.passenger_id = passenger_id;
+    security_message.frustration = 0;
     while(msgsnd(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), 0) == -1) {
         if (errno != EINTR) {
-            log_message_with_id(log_queue, ROLE, "[ERROR] Failed to put messege to security queue", passenger_id);
+            log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to put messege to security queue");
             goto cleanup;
         }
     }
-    log_message_with_id(log_queue, ROLE, "Requested security station allocation", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Requested security station allocation");
     while(msgrcv(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), getpid(), 0) == -1) {
         if (errno != EINTR) {
-            log_message_with_id(log_queue, ROLE, "[ERROR] Failed to get messege from security queue", passenger_id);
+            log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to get messege from security queue");
             goto cleanup;
         }
     }
     sem_signal_single(sem_security, 0);
     
     ticket.state = PASSENGER_BOARDING;
-    log_message_with_id(log_queue, ROLE, "Passed security, waiting to board", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board");
     
     // Wait for ramp access
     sem_wait_single(sem_ramp, 0);
     
-    log_message_with_id(log_queue, ROLE, "Boarding ferry", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
     
     // Simulate boarding time
     sleep(PASSENGER_BOARDING_TIME);
@@ -131,7 +132,7 @@ int main(int argc, char** argv) {
     sem_signal_single(sem_ramp, 0);
     
     ticket.state = PASSENGER_BOARDED;
-    log_message_with_id(log_queue, ROLE, "Boarded successfully", passenger_id);
+    log_message(log_queue, ROLE, passenger_id, "Boarded successfully");
     
 cleanup:
     queue_close(log_queue);

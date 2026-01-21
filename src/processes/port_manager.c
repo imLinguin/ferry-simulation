@@ -3,12 +3,16 @@
 #include <signal.h>
 #include <libgen.h>
 #include <string.h>
+#include <errno.h>
+#include <time.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 
 #include "common/config.h"
 #include "common/state.h"
 #include "common/ipc.h"
 #include "common/logging.h"
+#include "common/messages.h"
 #include "processes/port_manager.h"
 
 #define ROLE ROLE_PORT_MANAGER
@@ -20,26 +24,23 @@ int main(int argc, char** argv) {
     key_t logger_key;
     key_t shm_key;
     key_t sem_state_mutex_key;
-    key_t sem_security_key;
     key_t sem_ramp_key;
     
     int log_queue = -1;
     int shm_id;
     int sem_state_mutex;
-    int sem_security;
     int sem_ramp;
     SharedState* shared_state;
 
     if (argc < 2) return 1;
 
-    signal(SIGINT, handle_signal);
+    // signal(SIGINT, handle_signal);
     signal(SIGUSR2, handle_sigusr2);
 
     // Open IPC resources
     logger_key = ftok(argv[1], IPC_KEY_LOG_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
-    sem_security_key = ftok(argv[1], IPC_KEY_SEM_SECURITY_ID);
     sem_ramp_key = ftok(argv[1], IPC_KEY_SEM_RAMP_ID);
     
     if (logger_key != -1) {
@@ -59,16 +60,15 @@ int main(int argc, char** argv) {
     }
     
     sem_state_mutex = sem_open(sem_state_mutex_key, 1);
-    sem_security = sem_open(sem_security_key, 1);
     sem_ramp = sem_open(sem_ramp_key, 1);
     
-    if (sem_state_mutex == -1 || sem_security == -1 || sem_ramp == -1) {
+    if (sem_state_mutex == -1 || sem_ramp == -1) {
         perror("Port manager: Failed to open semaphores");
         shm_detach(shared_state);
         return 1;
     }
 
-    log_message(log_queue, ROLE, "Port manager starting up");
+    log_message(log_queue, ROLE, -1, "Port manager starting up");
 
     // Derive paths from argv[1] (which contains the path from main's argv[0])
     char* bin_dir = dirname(strdup(argv[1]));
@@ -82,6 +82,15 @@ int main(int argc, char** argv) {
     
     pid_t ferry_pids[FERRY_COUNT];
     pid_t passenger_pids[PASSENGER_COUNT];
+    pid_t security_manager;
+
+    security_manager = fork();
+    if (security_manager == -1) {
+        perror("Failed to spawn security manager");
+    }
+    else if (security_manager == 0) {
+        return run_security_manager(argv[1]);
+    }
     
     // Spawn ferry managers
     for (int i = 0; i < FERRY_COUNT; i++) {
@@ -111,7 +120,7 @@ int main(int argc, char** argv) {
         }
     }
     
-    log_message_with_id(log_queue, ROLE, "Spawned all ferries and passengers", 0);
+    log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
     
     // Wait for all ferry managers and passengers
     for (int i = 0; i < FERRY_COUNT; i++) {
@@ -120,8 +129,130 @@ int main(int argc, char** argv) {
     for (int i = 0; i < PASSENGER_COUNT; i++) {
         waitpid(passenger_pids[i], NULL, 0);
     }
-    
+    waitpid(security_manager, NULL, 0);
+
     shm_detach(shared_state);
+
+    return 0;
+}
+
+int security_try_insert(SecurityStationState *securityStations, SecurityMessage *msg) {
+    int found = 0;
+    int variation = (rand() % PASSENGER_SECURITY_TIME_MAX) + PASSENGER_BAG_WEIGHT_MIN;
+
+    for (int station = 0; station < SECURITY_STATIONS; station++) {
+        if (securityStations[station].usage == 0) {
+            securityStations[station].gender = msg->gender;
+            securityStations[station].slots[0].pid = msg->pid;
+            securityStations[station].slots[0].finish_timestamp = time(NULL) + variation;
+            securityStations[station].usage++;
+            found = 1;
+        }
+        else if (securityStations[station].usage == 1 && msg->gender == (Gender)securityStations[station].gender) {
+            // Find an empty slot
+            for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
+                if (securityStations[station].slots[slot].pid == 0) {
+                    securityStations[station].slots[slot].pid = msg->pid;
+                    securityStations[station].slots[slot].finish_timestamp = time(NULL) + variation;
+                    securityStations[station].usage++;
+                    found = 1;
+                    break;
+                }
+            }
+        }
+
+        if (found) break;
+    }
+    return found;
+}
+
+int run_security_manager(const char* ipc_key) {
+    key_t queue_security_key;
+    key_t queue_log_key;
+    int queue_security;
+    int queue_log;
+
+    int capacity = SECURITY_STATIONS * SECURITY_STATION_CAPACITY;
+    SecurityStationState security_stations[SECURITY_STATIONS];
+    SecurityMessage msg;
+    SecurityMessage pending;
+    SecurityMessage internal_queue;
+    
+    queue_security_key = ftok(ipc_key, IPC_KEY_QUEUE_SECURITY_ID);
+    queue_log_key = ftok(ipc_key, IPC_KEY_LOG_ID);
+
+    if (queue_security_key == -1) {
+        perror("Security manager: Failed to open semaphores");
+        return 1;
+    }
+
+    queue_security = queue_open(queue_security_key);
+    queue_log = queue_open(queue_log_key);
+
+    pending.pid = 0;
+    internal_queue.pid = 0;
+    memset(security_stations, 0, sizeof(SecurityStationState) * SECURITY_STATIONS);
+
+    while(1) {
+        if (capacity == 0) goto reap_stations;
+        if (pending.pid) goto try_insert;
+        log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Receiving security queue request");
+        if(msgrcv(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 1, IPC_NOWAIT) == -1) {
+            if (errno == EINTR) continue;
+            if (errno == ENOMSG) goto try_insert;
+            perror("Security manager: msgrcv failed");
+        }
+        pending = msg;
+
+    try_insert:
+        // Try to insert
+        if (internal_queue.pid) {
+            if (security_try_insert(security_stations, &internal_queue)) {
+                internal_queue.pid = 0;
+                capacity--;
+            } else {
+                if (internal_queue.frustration == 3) goto reap_stations;
+                internal_queue.frustration++;
+            }
+        }
+
+        if (pending.pid && (!internal_queue.pid || internal_queue.frustration < SECURITY_MAX_FRUSTRATION)) {
+            log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Attempting to insert pending passenger_id: %d", pending.passenger_id);
+            if (security_try_insert(security_stations, &pending)) {
+                pending.pid = 0;
+                capacity--;
+            }
+            else if (!internal_queue.pid) {
+                log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "No slot found, adding to internal queue");
+                internal_queue = pending;
+                pending.pid = 0;
+            }
+            else {
+                log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "No slot found");
+            }
+        }
+    reap_stations:
+        usleep(200);
+        // Clean and notify completed passengers
+        for (int station = 0; station < SECURITY_STATIONS; station++) {
+            if (security_stations[station].usage == 0) continue;
+            for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
+                if (security_stations[station].slots[slot].pid != 0
+                    && security_stations[station].slots[slot].finish_timestamp < time(NULL)) {
+                    msg.mtype = security_stations[station].slots[slot].pid;
+                    msg.gender = security_stations[station].gender;
+
+                    
+                    if (msgsnd(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 0)) {
+                        perror("Failed to send message back to user");
+                    }
+                    security_stations[station].usage--;
+                    security_stations[station].slots[slot].pid = 0;
+                    capacity++;
+                }
+            }
+        }
+    }
 
     return 0;
 }

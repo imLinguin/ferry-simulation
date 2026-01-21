@@ -202,7 +202,9 @@ int main(int argc, char **argv) {
 int logger_loop(int queue_id) {
     FILE* log_file;
     LogMessage msg;
+    char time_buf[255] = "";
     int status = 0;
+    struct tm *time;
     
     log_file = fopen("./simulation.log", "w");
     if (!log_file) {
@@ -217,8 +219,16 @@ int logger_loop(int queue_id) {
             status = 1;
             break;
         }
-        printf("[%s_%04d] %s\n", ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
-        fprintf(log_file, "[%s_%04d] %s\n", ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
+        time = localtime(&msg.timestamp);
+        strftime(time_buf, sizeof(time_buf), "%d-%m-%y %H:%M:%S", time);
+        if (msg.identifier == -1) {
+            printf("%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);
+            fprintf(log_file, "%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);       
+        }
+        else {
+            printf("%s [%s_%04d] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
+            fprintf(log_file, "%s [%s_%04d] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
+        }
     }
 
     fflush(log_file);
