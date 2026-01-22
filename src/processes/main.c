@@ -220,7 +220,7 @@ int logger_loop(int queue_id) {
             break;
         }
         time = localtime(&msg.timestamp);
-        strftime(time_buf, sizeof(time_buf), "%d-%m-%y %H:%M:%S", time);
+        strftime(time_buf, sizeof(time_buf), "(%d-%m-%Y %H:%M:%S)", time);
         if (msg.identifier == -1) {
             printf("%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);
             fprintf(log_file, "%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);       

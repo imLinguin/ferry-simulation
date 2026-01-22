@@ -6,6 +6,7 @@
 
 typedef struct SecurityStationOccupant {
     long pid;
+    int passenger_id;
     time_t finish_timestamp;
 } SecurityStationOccupant;
 

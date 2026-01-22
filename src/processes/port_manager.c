@@ -138,13 +138,14 @@ int main(int argc, char** argv) {
 
 int security_try_insert(SecurityStationState *securityStations, SecurityMessage *msg) {
     int found = 0;
-    int variation = (rand() % PASSENGER_SECURITY_TIME_MAX) + PASSENGER_BAG_WEIGHT_MIN;
+    int variation = (rand() % (PASSENGER_SECURITY_TIME_MAX - PASSENGER_SECURITY_TIME_MIN + 1)) + PASSENGER_SECURITY_TIME_MIN;
 
     for (int station = 0; station < SECURITY_STATIONS; station++) {
         if (securityStations[station].usage == 0) {
             securityStations[station].gender = msg->gender;
             securityStations[station].slots[0].pid = msg->pid;
             securityStations[station].slots[0].finish_timestamp = time(NULL) + variation;
+            securityStations[station].slots[0].passenger_id = msg->passenger_id;
             securityStations[station].usage++;
             found = 1;
         }
@@ -154,6 +155,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
                 if (securityStations[station].slots[slot].pid == 0) {
                     securityStations[station].slots[slot].pid = msg->pid;
                     securityStations[station].slots[slot].finish_timestamp = time(NULL) + variation;
+                    securityStations[station].slots[slot].passenger_id = msg->passenger_id;
                     securityStations[station].usage++;
                     found = 1;
                     break;
@@ -172,7 +174,8 @@ int run_security_manager(const char* ipc_key) {
     int queue_security;
     int queue_log;
 
-    int capacity = SECURITY_STATIONS * SECURITY_STATION_CAPACITY;
+    int initial_capacity = SECURITY_STATIONS * SECURITY_STATION_CAPACITY;
+    int capacity = initial_capacity;
     SecurityStationState security_stations[SECURITY_STATIONS];
     SecurityMessage msg;
     SecurityMessage pending;
@@ -197,7 +200,8 @@ int run_security_manager(const char* ipc_key) {
         if (capacity == 0) goto reap_stations;
         if (pending.pid) goto try_insert;
         log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Receiving security queue request");
-        if(msgrcv(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 1, IPC_NOWAIT) == -1) {
+        int no_block = pending.pid + internal_queue.pid != 0 || capacity != initial_capacity;
+        if(msgrcv(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 1, no_block ? IPC_NOWAIT : 0) == -1) {
             if (errno == EINTR) continue;
             if (errno == ENOMSG) goto try_insert;
             perror("Security manager: msgrcv failed");
@@ -232,7 +236,7 @@ int run_security_manager(const char* ipc_key) {
             }
         }
     reap_stations:
-        usleep(200);
+        usleep(100);
         // Clean and notify completed passengers
         for (int station = 0; station < SECURITY_STATIONS; station++) {
             if (security_stations[station].usage == 0) continue;
@@ -240,9 +244,10 @@ int run_security_manager(const char* ipc_key) {
                 if (security_stations[station].slots[slot].pid != 0
                     && security_stations[station].slots[slot].finish_timestamp < time(NULL)) {
                     msg.mtype = security_stations[station].slots[slot].pid;
+                    msg.passenger_id = security_stations[station].slots[slot].passenger_id;
                     msg.gender = security_stations[station].gender;
-
                     
+                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security", msg.passenger_id);
                     if (msgsnd(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 0)) {
                         perror("Failed to send message back to user");
                     }
