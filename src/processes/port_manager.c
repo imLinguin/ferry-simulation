@@ -13,6 +13,7 @@
 #include "common/ipc.h"
 #include "common/logging.h"
 #include "common/messages.h"
+#include "common/macros.h"
 #include "processes/port_manager.h"
 
 #define ROLE ROLE_PORT_MANAGER
@@ -216,7 +217,6 @@ int run_security_manager(const char* ipc_key) {
                 capacity--;
             } else {
                 if (internal_queue.frustration == 3) goto reap_stations;
-                internal_queue.frustration++;
             }
         }
 
@@ -225,6 +225,7 @@ int run_security_manager(const char* ipc_key) {
             if (security_try_insert(security_stations, &pending)) {
                 pending.pid = 0;
                 capacity--;
+                if(internal_queue.pid) internal_queue.frustration++;
             }
             else if (!internal_queue.pid) {
                 log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "No slot found, adding to internal queue");
@@ -248,7 +249,7 @@ int run_security_manager(const char* ipc_key) {
                     msg.gender = security_stations[station].gender;
                     
                     log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security", msg.passenger_id);
-                    if (msgsnd(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 0)) {
+                    if (msgsnd(queue_security, &msg, MSG_SIZE(msg), 0)) {
                         perror("Failed to send message back to user");
                     }
                     security_stations[station].usage--;

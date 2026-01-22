@@ -8,6 +8,7 @@
 #include "common/state.h"
 #include "common/ipc.h"
 #include "common/logging.h"
+#include "common/macros.h"
 #include "processes/passenger.h"
 
 #define ROLE ROLE_PASSENGER
@@ -103,14 +104,14 @@ int main(int argc, char** argv) {
     security_message.pid = getpid();
     security_message.passenger_id = passenger_id;
     security_message.frustration = 0;
-    while(msgsnd(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), 0) == -1) {
+    while(msgsnd(queue_security, &security_message, MSG_SIZE(security_message), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to put messege to security queue");
             goto cleanup;
         }
     }
     log_message(log_queue, ROLE, passenger_id, "Requested security station allocation");
-    while(msgrcv(queue_security, &security_message, sizeof(security_message) - sizeof(security_message.mtype), getpid(), 0) == -1) {
+    while(msgrcv(queue_security, &security_message, MSG_SIZE(security_message), getpid(), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to get messege from security queue");
             goto cleanup;

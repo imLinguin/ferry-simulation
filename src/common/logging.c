@@ -4,6 +4,7 @@
 
 #include "common/ipc.h"
 #include "common/logging.h"
+#include "common/macros.h"
 
 
 void log_message(int queue, Role role, int identifier, const char* message, ...) {
@@ -21,5 +22,5 @@ void log_message(int queue, Role role, int identifier, const char* message, ...)
 
     va_end(args);
 
-    msgsnd(queue, &msg, sizeof(msg) - sizeof(msg.mtype), 0);
+    msgsnd(queue, &msg, MSG_SIZE(msg), 0);
 }

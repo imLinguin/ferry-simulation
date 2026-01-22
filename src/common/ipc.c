@@ -79,7 +79,7 @@ int sem_wait_single(int sem_id, unsigned short sem_num) {
 
 int sem_signal_single_noundo(int sem_id, unsigned short sem_num) {
     int retval;
-    struct sembuf op = {sem_num, 1, SEM_UNDO};
+    struct sembuf op = {sem_num, 1, 0};
     while ((retval = semop(sem_id, &op, 1)) == -1) {
         if (errno != EINTR) break;
     }
