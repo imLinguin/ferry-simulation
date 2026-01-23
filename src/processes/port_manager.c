@@ -18,8 +18,9 @@
 
 #define ROLE ROLE_PORT_MANAGER
 
-void handle_signal(int signal) {}
-void handle_sigusr2(int signal) {}
+void handle_signal(int signal) {
+    kill(getpid(), SIGUSR2);
+}
 
 int main(int argc, char** argv) {
     key_t logger_key;
@@ -32,11 +33,17 @@ int main(int argc, char** argv) {
     int sem_state_mutex;
     int sem_ramp;
     SharedState* shared_state;
+    struct sigaction sa;
 
     if (argc < 2) return 1;
 
-    // signal(SIGINT, handle_signal);
-    signal(SIGUSR2, handle_sigusr2);
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("PORTMANAGER Failed to register SIGINT");
+    }
 
     // Open IPC resources
     logger_key = ftok(argv[1], IPC_KEY_LOG_ID);
@@ -181,6 +188,12 @@ int run_security_manager(const char* ipc_key) {
     SecurityMessage msg;
     SecurityMessage pending;
     SecurityMessage internal_queue;
+    struct sigaction sa;
+
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa, NULL);
     
     queue_security_key = ftok(ipc_key, IPC_KEY_QUEUE_SECURITY_ID);
     queue_log_key = ftok(ipc_key, IPC_KEY_LOG_ID);
@@ -200,13 +213,13 @@ int run_security_manager(const char* ipc_key) {
     while(1) {
         if (capacity == 0) goto reap_stations;
         if (pending.pid) goto try_insert;
-        log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Receiving security queue request");
         int no_block = pending.pid + internal_queue.pid != 0 || capacity != initial_capacity;
         if(msgrcv(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 1, no_block ? IPC_NOWAIT : 0) == -1) {
             if (errno == EINTR) continue;
             if (errno == ENOMSG) goto try_insert;
             perror("Security manager: msgrcv failed");
         }
+        log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Receiving security queue request");
         pending = msg;
 
     try_insert:

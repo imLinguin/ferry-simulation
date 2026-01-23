@@ -28,7 +28,7 @@ void queue_close_if_exists(key_t queue_key) {
     }
 }
 
-int sem_create(key_t sem_key, int semaphore_count, const unsigned short* initial_values) {
+int sem_create(key_t sem_key, int semaphore_count, unsigned short* initial_values) {
     int sem_id = semget(sem_key, semaphore_count, IPC_CREAT | IPC_EXCL | 0600);
     if (sem_id == -1) return -1;
 

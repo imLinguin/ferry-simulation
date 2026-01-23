@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "common/config.h"
 #include "common/state.h"
@@ -12,6 +13,12 @@
 #include "processes/passenger.h"
 
 #define ROLE ROLE_PASSENGER
+
+int port_closed = 0;
+
+static void handler(int signum) {
+    if (signum == SIGUSR2) port_closed = 1;
+}
 
 int main(int argc, char** argv) {
     int passenger_id;
@@ -31,9 +38,23 @@ int main(int argc, char** argv) {
     key_t sem_security_key;
     key_t sem_ramp_key;
     key_t shm_key;
+
+    struct sigaction sa;
     
     if (argc < 3) return 1;
-    
+
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+
     passenger_id = atoi(argv[2]);
     
     // Open IPC resources

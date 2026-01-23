@@ -14,13 +14,13 @@
 
 volatile int should_depart = 0;
 
-void handle_sigusr1(int signal) {
-    should_depart = 1;
+static void handler(int signal) {
+    if (signal == SIGUSR1) should_depart = 1;
 }
 
 int main(int argc, char** argv) {
     int ferry_id;
-    int log_queue;
+    int log_queue = -1;
     int shm_id;
     int sem_state_mutex;
     int sem_ramp;
@@ -33,6 +33,17 @@ int main(int argc, char** argv) {
     key_t sem_current_ferry_key;
     key_t log_queue_key;
     
+    struct sigaction sa;
+
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        perror("[FERRY] Failed to setup signal handler SIGUSR1");
+        return 1;
+    }
+    
+
     if (argc < 3) return 1;
     
     ferry_id = atoi(argv[2]);
@@ -67,14 +78,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    signal(SIGUSR1, handle_sigusr1);
-    
     log_message(log_queue, ROLE, ferry_id, "Ferry manager started");
     log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
     
     // Ferry main loop: board passengers, depart, travel, return
-    time_t last_departure = time(NULL);
-    
     while (shared_state->port_open) {
         sem_wait_single(sem_current_ferry, 0);
         sem_wait_single(sem_state_mutex, 0);
@@ -95,9 +102,9 @@ int main(int argc, char** argv) {
                shared_state->port_open) {
             sleep(1);
         }
+        should_depart = 0;
         
         // Ensure ramp is empty before departing
-        
 
         sem_wait_single(sem_state_mutex, 0);
         
@@ -124,8 +131,6 @@ int main(int argc, char** argv) {
         log_message(log_queue, ROLE, ferry_id, "Ferry returned to queue");
         
         sem_signal_single(sem_state_mutex, 0);
-        
-        last_departure = time(NULL);
     }
     
     shm_detach(shared_state);

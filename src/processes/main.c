@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
     int sem_ramp;
     int sem_current_ferry;
     SharedState* shared_state;
+    struct sigaction sa;
 
     char port_manager_path[255] = "";
     char ferry_manager_path[255] = "";
@@ -49,9 +50,15 @@ int main(int argc, char **argv) {
     strcat(ferry_manager_path, "/ferry-manager");
     strcat(passenger_path, "/passenger");
     
-    // TODO: Use sigaction
-    // signal(SIGINT, SIG_IGN);
-    
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+
     // Initialize IPC keys
     queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
     queue_security_key = ftok(argv[0], IPC_KEY_QUEUE_SECURITY_ID);
@@ -205,7 +212,17 @@ int logger_loop(int queue_id) {
     char time_buf[255] = "";
     int status = 0;
     struct tm *time;
-    
+    struct sigaction sa;
+
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+
     log_file = fopen("./simulation.log", "w");
     if (!log_file) {
         return 1;
@@ -215,7 +232,6 @@ int logger_loop(int queue_id) {
 
     while (1) {
         if (msgrcv(queue_id, &msg, sizeof(LogMessage) - sizeof(msg.mtype), 0, 0) == -1) {
-            // if (errno == EINTR) continue;
             status = 1;
             break;
         }
