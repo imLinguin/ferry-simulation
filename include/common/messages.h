@@ -13,6 +13,17 @@ typedef struct SecurityMessage {
     int frustration;
 } SecurityMessage;
 
+// Ramp queue message types
+#define RAMP_MESSAGE_EXIT 1        // Passenger leaving ramp
+#define RAMP_PRIORITY_VIP 2        // VIP passenger request
+#define RAMP_PRIORITY_REGULAR 3    // Regular passenger request
+
+typedef struct RampMessage {
+    long mtype;           // Priority: 1=exit, 2=VIP, 3=Regular, or PID for response
+    long pid;             // Passenger PID for response
+    int passenger_id;
+} RampMessage;
+
 typedef struct LogMessage {
     long mtype;
     int identifier;

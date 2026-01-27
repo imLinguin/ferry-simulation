@@ -19,11 +19,13 @@ union semun {
 // Queues are lowercase
 #define IPC_KEY_LOG_ID 'l'
 #define IPC_KEY_QUEUE_SECURITY_ID 's'
+#define IPC_KEY_QUEUE_RAMP_ID 'r'
 // SEM and SHM uppercase
 #define IPC_KEY_SHM_ID 'S'
 #define IPC_KEY_SEM_STATE_ID 'M'
 #define IPC_KEY_SEM_SECURITY_ID 'E'
 #define IPC_KEY_SEM_RAMP_ID 'R'
+#define IPC_KEY_SEM_RAMP_SLOTS_ID 'T'
 #define IPC_KEY_SEM_CURRENT_FERRY 'F'
 
 int queue_create(key_t queue_key);

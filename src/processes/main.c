@@ -23,18 +23,22 @@ int main(int argc, char **argv) {
     
     key_t queue_log_key;
     key_t queue_security_key;
+    key_t queue_ramp_key;
     key_t shm_key;
     key_t sem_state_mutex_key;
     key_t sem_security_key;
     key_t sem_ramp_key;
+    key_t sem_ramp_slots_key;
     key_t sem_current_ferry_key;
     
     int log_queue_id;
     int security_queue_id;
+    int ramp_queue_id;
     int shm_id;
     int sem_state_mutex;
     int sem_security;
     int sem_ramp;
+    int sem_ramp_slots;
     int sem_current_ferry;
     SharedState* shared_state;
     struct sigaction sa;
@@ -64,14 +68,17 @@ int main(int argc, char **argv) {
     // Initialize IPC keys
     queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
     queue_security_key = ftok(argv[0], IPC_KEY_QUEUE_SECURITY_ID);
+    queue_ramp_key = ftok(argv[0], IPC_KEY_QUEUE_RAMP_ID);
     shm_key = ftok(argv[0], IPC_KEY_SHM_ID);
     sem_state_mutex_key = ftok(argv[0], IPC_KEY_SEM_STATE_ID);
     sem_security_key = ftok(argv[0], IPC_KEY_SEM_SECURITY_ID);
     sem_ramp_key = ftok(argv[0], IPC_KEY_SEM_RAMP_ID);
+    sem_ramp_slots_key = ftok(argv[0], IPC_KEY_SEM_RAMP_SLOTS_ID);
     sem_current_ferry_key = ftok(argv[0], IPC_KEY_SEM_CURRENT_FERRY);
     
-    if (queue_log_key == -1 || shm_key == -1 || queue_security_key == 1 ||
-        sem_state_mutex_key == -1 || sem_security_key == -1 || sem_ramp_key == -1 || sem_current_ferry_key == -1) {
+    if (queue_log_key == -1 || shm_key == -1 || queue_security_key == 1 || queue_ramp_key == -1 ||
+        sem_state_mutex_key == -1 || sem_security_key == -1 || sem_ramp_key == -1 || 
+        sem_ramp_slots_key == -1 || sem_current_ferry_key == -1) {
         perror("Failed to initialize IPC keys");
         return 1;
     }
@@ -79,12 +86,14 @@ int main(int argc, char **argv) {
     // Clean up existing IPC resources
     queue_close_if_exists(queue_log_key);
     queue_close_if_exists(queue_security_key);
+    queue_close_if_exists(queue_ramp_key);
 
     shm_close_if_exists(shm_key);
 
     sem_close_if_exists(sem_state_mutex_key);
     sem_close_if_exists(sem_security_key);
     sem_close_if_exists(sem_ramp_key);
+    sem_close_if_exists(sem_ramp_slots_key);
     sem_close_if_exists(sem_current_ferry_key);
 
     printf("Initializing queues\n");
@@ -95,6 +104,10 @@ int main(int argc, char **argv) {
     }
     if ((security_queue_id = queue_create(queue_security_key)) == -1) {
         perror("Failed to create security queue");
+        return 1;
+    }
+    if ((ramp_queue_id = queue_create(queue_ramp_key)) == -1) {
+        perror("Failed to create ramp queue");
         return 1;
     }
     
@@ -154,12 +167,25 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    unsigned short current_ferry_init = 1;
-    if ((sem_current_ferry = sem_create(sem_current_ferry_key, 1, &current_ferry_init)) == -1) {
-        perror("Failed to create ramp semaphore");
+    // FIXME: USE a ulimit ?
+    unsigned short ramp_slots_init = RAMP_CAPACITY;
+    if ((sem_ramp_slots = sem_create(sem_ramp_slots_key, 1, &ramp_slots_init)) == -1) {
+        perror("Failed to create ramp slots semaphore");
         sem_close(sem_state_mutex);
         sem_close(sem_security);
         sem_close(sem_ramp);
+        shm_detach(shared_state);
+        shm_close(shm_id);
+        return 1;
+    }
+
+    unsigned short current_ferry_init = 1;
+    if ((sem_current_ferry = sem_create(sem_current_ferry_key, 1, &current_ferry_init)) == -1) {
+        perror("Failed to create current ferry semaphore");
+        sem_close(sem_state_mutex);
+        sem_close(sem_security);
+        sem_close(sem_ramp);
+        sem_close(sem_ramp_slots);
         shm_detach(shared_state);
         shm_close(shm_id);
         return 1;
@@ -198,10 +224,12 @@ int main(int argc, char **argv) {
     
     // Clean up IPC resources
     sem_close(sem_ramp);
+    sem_close(sem_ramp_slots);
     sem_close(sem_security);
     sem_close(sem_state_mutex);
     shm_close(shm_id);
     queue_close_if_exists(queue_security_key);
+    queue_close_if_exists(queue_ramp_key);
 
     return 0;
 }

@@ -10,6 +10,7 @@
 #include "common/ipc.h"
 #include "common/logging.h"
 #include "common/macros.h"
+#include "common/messages.h"
 #include "processes/passenger.h"
 
 #define ROLE ROLE_PASSENGER
@@ -24,19 +25,22 @@ int main(int argc, char** argv) {
     int passenger_id;
     int log_queue = -1;
     int queue_security;
+    int queue_ramp;
     int sem_state_mutex;
     int sem_security;
-    int sem_ramp;
+    int sem_ramp_slots;
     int shm_id;
     PassengerTicket ticket;
     SecurityMessage security_message;
+    RampMessage ramp_message;
     SharedState *shm;
 
     key_t log_queue_key;
     key_t key_security;
+    key_t key_ramp;
     key_t sem_state_mutex_key;
     key_t sem_security_key;
-    key_t sem_ramp_key;
+    key_t sem_ramp_slots_key;
     key_t shm_key;
 
     struct sigaction sa;
@@ -60,9 +64,10 @@ int main(int argc, char** argv) {
     // Open IPC resources
     log_queue_key = ftok(argv[1], IPC_KEY_LOG_ID);
     key_security = ftok(argv[1], IPC_KEY_QUEUE_SECURITY_ID);
+    key_ramp = ftok(argv[1], IPC_KEY_QUEUE_RAMP_ID);
     sem_security_key = ftok(argv[1], IPC_KEY_SEM_SECURITY_ID);
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
-    sem_ramp_key = ftok(argv[1], IPC_KEY_SEM_RAMP_ID);
+    sem_ramp_slots_key = ftok(argv[1], IPC_KEY_SEM_RAMP_SLOTS_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     
     if (log_queue_key != -1) {
@@ -70,14 +75,15 @@ int main(int argc, char** argv) {
     }
     
     queue_security = queue_open(key_security);
+    queue_ramp = queue_open(key_ramp);
     sem_state_mutex = sem_open(sem_state_mutex_key, 1);
     sem_security = sem_open(sem_security_key, 1);
-    sem_ramp = sem_open(sem_ramp_key, 1);
+    sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
     
     shm_id = shm_open(shm_key);
     shm = shm_attach(shm_id);
 
-    if (sem_state_mutex == -1 || sem_security == -1 || sem_ramp == -1 || log_queue == -1) {
+    if (sem_state_mutex == -1 || sem_security == -1 || log_queue == -1 || queue_ramp == -1 || sem_ramp_slots == -1) {
         perror("Failed to init passenger");
         return 1;
     }
@@ -137,15 +143,48 @@ int main(int argc, char** argv) {
     ticket.state = PASSENGER_BOARDING;
     log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board");
     
-    // Wait for ramp access
-    sem_wait_single(sem_ramp, 0);
+    // Wait for ramp slot availability (prevents queue overflow)
+    log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
+    sem_wait_single_noundo(sem_ramp_slots, 0);
+    
+    // Request ramp access via message queue
+    ramp_message.mtype = ticket.vip ? RAMP_PRIORITY_VIP : RAMP_PRIORITY_REGULAR;
+    ramp_message.pid = getpid();
+    ramp_message.passenger_id = passenger_id;
+    
+    log_message(log_queue, ROLE, passenger_id, "Requesting ramp access (VIP: %d)", ticket.vip);
+    while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
+        if (errno != EINTR) {
+            log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to request ramp access");
+            sem_signal_single_noundo(sem_ramp_slots, 0);
+            goto cleanup;
+        }
+    }
+    
+    // Wait for permission from ramp manager
+    while(msgrcv(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), getpid(), 0) == -1) {
+        if (errno != EINTR) {
+            log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to receive ramp permission");
+            sem_signal_single_noundo(sem_ramp_slots, 0);
+            goto cleanup;
+        }
+    }
     
     log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
     
     // Simulate boarding time
     sleep(PASSENGER_BOARDING_TIME);
-
-    sem_signal_single(sem_ramp, 0);
+    
+    // Signal exit from ramp
+    ramp_message.mtype = RAMP_MESSAGE_EXIT;
+    ramp_message.pid = getpid();
+    ramp_message.passenger_id = passenger_id;
+    while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
+        if (errno != EINTR) {
+            log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to signal ramp exit");
+            goto cleanup;
+        }
+    }
     
     ticket.state = PASSENGER_BOARDED;
     log_message(log_queue, ROLE, passenger_id, "Boarded successfully");
@@ -153,8 +192,9 @@ int main(int argc, char** argv) {
 cleanup:
     queue_close(log_queue);
     queue_close(queue_security);
+    queue_close(queue_ramp);
     sem_close(sem_state_mutex);
     sem_close(sem_security);
-    sem_close(sem_ramp);
+    sem_close(sem_ramp_slots);
     return 0;
 }
