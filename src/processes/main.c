@@ -14,6 +14,8 @@
 #include "common/ipc.h"
 #include <stdlib.h>
 
+#include "common/macros.h"
+
 int main(int argc, char **argv) {
     char* bin_dir;
     pid_t manager_pid;
@@ -125,7 +127,6 @@ int main(int argc, char **argv) {
     
     printf("Initializing semaphores\n");
     // Create semaphores
-    // State mutex: 1 semaphore initialized to 1 (binary mutex)
     unsigned short state_mutex_init = 1;
     if ((sem_state_mutex = sem_create(sem_state_mutex_key, 1, &state_mutex_init)) == -1) {
         perror("Failed to create state mutex semaphore");
@@ -158,7 +159,7 @@ int main(int argc, char **argv) {
         perror("Failed to create ramp semaphore");
         sem_close(sem_state_mutex);
         sem_close(sem_security);
-        sem_close(sem_ramp_key);
+        sem_close(sem_ramp);
         shm_detach(shared_state);
         shm_close(shm_id);
         return 1;
@@ -192,6 +193,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     waitpid(manager_pid, NULL, 0);
+    queue_close_if_exists(queue_log_key);
     waitpid(logger_pid, NULL, 0);
     
     // Clean up IPC resources
@@ -199,7 +201,6 @@ int main(int argc, char **argv) {
     sem_close(sem_security);
     sem_close(sem_state_mutex);
     shm_close(shm_id);
-    queue_close_if_exists(queue_log_key);
     queue_close_if_exists(queue_security_key);
 
     return 0;
@@ -231,7 +232,8 @@ int logger_loop(int queue_id) {
     printf("Logger start\n");
 
     while (1) {
-        if (msgrcv(queue_id, &msg, sizeof(LogMessage) - sizeof(msg.mtype), 0, 0) == -1) {
+        if (msgrcv(queue_id, &msg, MSG_SIZE(msg), 0, 0) == -1) {
+            if (errno == EINTR) continue;
             status = 1;
             break;
         }

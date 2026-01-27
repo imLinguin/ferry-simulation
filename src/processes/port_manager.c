@@ -18,7 +18,7 @@
 
 #define ROLE ROLE_PORT_MANAGER
 
-void handle_signal(int signal) {
+static void handle_signal(int signal) {
     kill(getpid(), SIGUSR2);
 }
 
@@ -144,11 +144,17 @@ int main(int argc, char** argv) {
     return 0;
 }
 
+// Attempt to insert user ticket into the security station
+// Returns:
+// 0 - if no slot found
+// 1 - if user was inserted
 int security_try_insert(SecurityStationState *securityStations, SecurityMessage *msg) {
     int found = 0;
     int variation = (rand() % (PASSENGER_SECURITY_TIME_MAX - PASSENGER_SECURITY_TIME_MIN + 1)) + PASSENGER_SECURITY_TIME_MIN;
 
+    // Find appropriate security station to store user in
     for (int station = 0; station < SECURITY_STATIONS; station++) {
+        // First look if the station is not occupied
         if (securityStations[station].usage == 0) {
             securityStations[station].gender = msg->gender;
             securityStations[station].slots[0].pid = msg->pid;
@@ -157,6 +163,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
             securityStations[station].usage++;
             found = 1;
         }
+        // In another case check if a slot is available and if user's gender matches the station
         else if (securityStations[station].usage == 1 && msg->gender == (Gender)securityStations[station].gender) {
             // Find an empty slot
             for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
@@ -214,7 +221,8 @@ int run_security_manager(const char* ipc_key) {
         if (capacity == 0) goto reap_stations;
         if (pending.pid) goto try_insert;
         int no_block = pending.pid + internal_queue.pid != 0 || capacity != initial_capacity;
-        if(msgrcv(queue_security, &msg, sizeof(msg) - sizeof(msg.mtype), 1, no_block ? IPC_NOWAIT : 0) == -1) {
+        if(msgrcv(queue_security, &msg, MSG_SIZE(msg), 1, no_block ? IPC_NOWAIT : 0) == -1) {
+            if (errno == EINVAL) break;
             if (errno == EINTR) continue;
             if (errno == ENOMSG) goto try_insert;
             perror("Security manager: msgrcv failed");

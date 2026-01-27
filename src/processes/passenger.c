@@ -14,7 +14,7 @@
 
 #define ROLE ROLE_PASSENGER
 
-int port_closed = 0;
+volatile int port_closed = 0;
 
 static void handler(int signum) {
     if (signum == SIGUSR2) port_closed = 1;
@@ -94,8 +94,6 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, passenger_id, "At baggage check");
     
     // Baggage check: is current ferry suitable for us?
-    int valid_ferry = -1;
-    char msg[255] = "";
     while(1) {
         sem_wait_single(sem_state_mutex, 0);
         if (shm->current_ferry_id != -1) {
@@ -104,20 +102,16 @@ int main(int argc, char** argv) {
                 sem_signal_single(sem_state_mutex, 0);
                 break;
             }
-            snprintf(msg, 255, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
-            log_message(log_queue, ROLE, passenger_id, msg);
+            log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
         }
         sem_signal_single(sem_state_mutex, 0);
-        sleep(1);
+        usleep(100);
     }
     shm_detach(shm);
     
     ticket.state = PASSENGER_WAITING;
     log_message(log_queue, ROLE, passenger_id, "Passed baggage check");
     
-    // Security check: use semaphore to ensure gender constraint
-    int assigned_station = -1;
-
     log_message(log_queue, ROLE, passenger_id, "Waiting for security");
     sem_wait_single(sem_security, 0);
     security_message.mtype = SECURITY_MESSAGE_MANAGER_ID;

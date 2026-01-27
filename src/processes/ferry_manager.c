@@ -13,9 +13,10 @@
 #define ROLE ROLE_FERRY_MANAGER
 
 volatile int should_depart = 0;
+volatile int is_active = 0;
 
 static void handler(int signal) {
-    if (signal == SIGUSR1) should_depart = 1;
+    if (is_active && signal == SIGUSR1) should_depart = 1;
 }
 
 int main(int argc, char** argv) {
@@ -42,7 +43,10 @@ int main(int argc, char** argv) {
         perror("[FERRY] Failed to setup signal handler SIGUSR1");
         return 1;
     }
-    
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("[FERRY] Failed to setup signal handler SIGINT");
+        return 1;
+    }
 
     if (argc < 3) return 1;
     
@@ -84,8 +88,9 @@ int main(int argc, char** argv) {
     // Ferry main loop: board passengers, depart, travel, return
     while (shared_state->port_open) {
         sem_wait_single(sem_current_ferry, 0);
+        is_active = 1;
         sem_wait_single(sem_state_mutex, 0);
-        
+
         log_message(log_queue, ROLE, ferry_id, "Ferry manager updating current ferry state");
         shared_state->current_ferry_id = ferry_id;
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
@@ -114,7 +119,8 @@ int main(int argc, char** argv) {
         
         sem_signal_single(sem_state_mutex, 0);
         sem_signal_single(sem_current_ferry, 0);
-        
+        is_active = 0;
+
         // Travel
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
         sleep(FERRY_TRAVEL_TIME);
