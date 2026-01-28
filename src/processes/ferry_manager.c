@@ -47,6 +47,10 @@ int main(int argc, char** argv) {
         perror("[FERRY] Failed to setup signal handler SIGUSR1");
         return 1;
     }
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+        perror("[FERRY] Failed to setup signal handler SIGUSR2");
+        return 1;
+    }
     if (sigaction(SIGINT, &sa, NULL) == -1) {
         perror("[FERRY] Failed to setup signal handler SIGINT");
         return 1;
@@ -79,7 +83,7 @@ int main(int argc, char** argv) {
     }
     
     queue_ramp = queue_open(key_ramp);
-    sem_state_mutex = sem_open(sem_state_mutex_key, 1);
+    sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
     sem_current_ferry = sem_open(sem_current_ferry_key, 1);
     sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
     
@@ -92,22 +96,32 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
     
     // Ferry main loop: board passengers, depart, travel, return
-    while (shared_state->port_open) {
-        sem_wait_single(sem_current_ferry, 0);
+    while (1) {
+        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+        if (!shared_state->port_open)
+        {
+            sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+            break;
+        }
+        sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+
+        START_SEMAPHORE(sem_current_ferry, 0)
         is_active = 1;
 
-        sem_wait_single(sem_state_mutex, 0);
-
+        START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         log_message(log_queue, ROLE, ferry_id, "Ferry manager updating current ferry state");
         shared_state->current_ferry_id = ferry_id;
+        END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
+
+        START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
         log_message(log_queue, ROLE, ferry_id, "Ferry is now boarding");
-        
-        sem_signal_single(sem_state_mutex, 0);
-        
+        END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+
         // Wait for boarding to complete or early departure signal
         time_t boarding_start = time(NULL);
         should_depart = 0;
+        int usage = 0;
 
         sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY);
 
@@ -125,6 +139,7 @@ int main(int argc, char** argv) {
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
                     // Passenger leaving ramp
                     if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, 0); // Release semaphore slot
+                    usage--;
                     log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp", ramp_msg.passenger_id);
                 } else {
                     // Grant ramp access
@@ -132,23 +147,29 @@ int main(int argc, char** argv) {
                                 ramp_msg.passenger_id, ramp_msg.mtype == RAMP_PRIORITY_VIP);
                     ramp_msg.mtype = ramp_msg.pid;  // Response to specific passenger
                     msgsnd(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), 0);
+                    usage++;
                 }
             }
 
             // Ensure ramp is empty before departing
-            if (gate_close && (sem_get_val(sem_ramp_slots, 0) == 0)) break;
+            if (gate_close && !usage && (sem_get_val(sem_ramp_slots, 0) == 0)) break;
             
             usleep(10000); // 10ms sleep to avoid busy waiting
         }
         log_message(log_queue, ROLE, ferry_id, "Gate closing");
         sem_wait_single(sem_state_mutex, 0);
-        
+        START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         log_message(log_queue, ROLE, ferry_id, "Ferry departing");
         shared_state->current_ferry_id = -1;
+        END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
+
+        START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         shared_state->ferries[ferry_id].status = FERRY_DEPARTED;
-        
+        END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+
+
         sem_signal_single(sem_state_mutex, 0);
-        sem_signal_single(sem_current_ferry, 0);
+        END_SEMAPHORE(sem_current_ferry, 0);
         is_active = 0;
 
         // Travel
@@ -168,7 +189,7 @@ int main(int argc, char** argv) {
         
         sem_signal_single(sem_state_mutex, 0);
     }
-    
+    log_message(log_queue, ROLE, ferry_id, "Ferry exiting");
     shm_detach(shared_state);
     return 0;
 }

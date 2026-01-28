@@ -15,6 +15,8 @@
 
 #define ROLE ROLE_PASSENGER
 
+#define PORT_CLOSED_RETURN if(port_closed) { log_message(log_queue, ROLE, passenger_id, "Port is closing, exiting the port."); return 0; }
+
 volatile int port_closed = 0;
 
 static void handler(int signum) {
@@ -76,7 +78,7 @@ int main(int argc, char** argv) {
     
     queue_security = queue_open(key_security);
     queue_ramp = queue_open(key_ramp);
-    sem_state_mutex = sem_open(sem_state_mutex_key, 1);
+    sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
     sem_security = sem_open(sem_security_key, 1);
     sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
     
@@ -101,16 +103,17 @@ int main(int argc, char** argv) {
     
     // Baggage check: is current ferry suitable for us?
     while(1) {
-        sem_wait_single(sem_state_mutex, 0);
+        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         if (shm->current_ferry_id != -1) {
             if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
                 log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit");
-                sem_signal_single(sem_state_mutex, 0);
+                sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
                 break;
             }
             log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
         }
-        sem_signal_single(sem_state_mutex, 0);
+        sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
+        PORT_CLOSED_RETURN;
         usleep(100);
     }
     shm_detach(shm);
@@ -119,6 +122,7 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, passenger_id, "Passed baggage check");
     
     log_message(log_queue, ROLE, passenger_id, "Waiting for security");
+    PORT_CLOSED_RETURN;
     sem_wait_single(sem_security, 0);
     security_message.mtype = SECURITY_MESSAGE_MANAGER_ID;
     security_message.gender = ticket.gender;
@@ -139,6 +143,7 @@ int main(int argc, char** argv) {
         }
     }
     sem_signal_single(sem_security, 0);
+    PORT_CLOSED_RETURN;
     
     ticket.state = PASSENGER_BOARDING;
     log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board");
@@ -191,7 +196,7 @@ int main(int argc, char** argv) {
             goto cleanup;
         }
     }
-    
+
     ticket.state = PASSENGER_BOARDED;
     log_message(log_queue, ROLE, passenger_id, "Boarded successfully");
     

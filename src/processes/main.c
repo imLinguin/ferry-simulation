@@ -64,6 +64,11 @@ int main(int argc, char **argv) {
         perror("Failed to setup signal handler");
         return 1;
     }
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+
 
     // Initialize IPC keys
     queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
@@ -139,8 +144,8 @@ int main(int argc, char **argv) {
     
     printf("Initializing semaphores\n");
     // Create semaphores
-    unsigned short state_mutex_init = 1;
-    if ((sem_state_mutex = sem_create(sem_state_mutex_key, 1, &state_mutex_init)) == -1) {
+    unsigned short state_mutex_init[SEM_STATE_MUTEX_VARIANT_COUNT] = {1, 1, 1};
+    if ((sem_state_mutex = sem_create(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT, state_mutex_init)) == -1) {
         perror("Failed to create state mutex semaphore");
         shm_detach(shared_state);
         shm_close(shm_id);
@@ -247,6 +252,11 @@ int logger_loop(int queue_id) {
     sa.sa_flags = SA_RESTART;
 
     if (sigaction(SIGINT, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
         perror("Failed to setup signal handler");
         return 1;
     }

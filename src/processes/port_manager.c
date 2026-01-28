@@ -18,8 +18,16 @@
 
 #define ROLE ROLE_PORT_MANAGER
 
+int sem_state_mutex;
+SharedState* shared_state;
+
 static void handle_signal(int signal) {
-    kill(getpid(), SIGUSR2);
+    if (signal == SIGINT) {
+        kill(0, SIGUSR2);
+        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+        shared_state->port_open = 0;
+        sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -30,9 +38,7 @@ int main(int argc, char** argv) {
     
     int log_queue = -1;
     int shm_id;
-    int sem_state_mutex;
     int sem_ramp;
-    SharedState* shared_state;
     struct sigaction sa;
 
     if (argc < 2) return 1;
@@ -43,6 +49,9 @@ int main(int argc, char** argv) {
 
     if (sigaction(SIGINT, &sa, NULL) == -1) {
         perror("PORTMANAGER Failed to register SIGINT");
+    }
+    if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+        perror("PORTMANAGER Failed to register SIGUSR2");
     }
 
     // Open IPC resources
@@ -69,7 +78,7 @@ int main(int argc, char** argv) {
     
     sem_state_mutex = sem_open(sem_state_mutex_key, 1);
     sem_ramp = sem_open(sem_ramp_key, 1);
-    
+
     if (sem_state_mutex == -1 || sem_ramp == -1) {
         perror("Port manager: Failed to open semaphores");
         shm_detach(shared_state);
@@ -132,13 +141,14 @@ int main(int argc, char** argv) {
     
     // Wait for all ferry managers and passengers
     int counter = 0;
-    while (counter != (PASSENGER_COUNT + FERRY_COUNT + 1)) {
+    while (counter < (PASSENGER_COUNT + FERRY_COUNT + 1)) {
         if (waitpid(0, NULL, WNOHANG) > 0) {
             counter++;
         }
         usleep(10000);
     }
 
+    log_message(log_queue, ROLE, -1, "Port manager exiting, counter is %d", counter);
     shm_detach(shared_state);
 
     return 0;
@@ -201,7 +211,9 @@ int run_security_manager(const char* ipc_key) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa, NULL);
-    
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+
     queue_security_key = ftok(ipc_key, IPC_KEY_QUEUE_SECURITY_ID);
     queue_log_key = ftok(ipc_key, IPC_KEY_LOG_ID);
 

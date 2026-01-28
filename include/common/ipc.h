@@ -28,6 +28,14 @@ union semun {
 #define IPC_KEY_SEM_RAMP_SLOTS_ID 'T'
 #define IPC_KEY_SEM_CURRENT_FERRY 'F'
 
+
+typedef enum SemStateMutexVariant {
+    SEM_STATE_MUTEX_VARIANT_PORT,
+    SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY,
+    SEM_STATE_MUTEX_VARIANT_FERRIES_STATE,
+    SEM_STATE_MUTEX_VARIANT_COUNT
+} SemStateMutexVariant;
+
 int queue_create(key_t queue_key);
 int queue_open(key_t queue_key);
 int queue_close(int queue_id);
