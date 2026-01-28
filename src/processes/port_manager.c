@@ -131,13 +131,13 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
     
     // Wait for all ferry managers and passengers
-    for (int i = 0; i < FERRY_COUNT; i++) {
-        waitpid(ferry_pids[i], NULL, 0);
+    int counter = 0;
+    while (counter != (PASSENGER_COUNT + FERRY_COUNT + 1)) {
+        if (waitpid(0, NULL, WNOHANG) > 0) {
+            counter++;
+        }
+        usleep(10000);
     }
-    for (int i = 0; i < PASSENGER_COUNT; i++) {
-        waitpid(passenger_pids[i], NULL, 0);
-    }
-    waitpid(security_manager, NULL, 0);
 
     shm_detach(shared_state);
 
@@ -258,7 +258,7 @@ int run_security_manager(const char* ipc_key) {
             }
         }
     reap_stations:
-        usleep(100);
+        usleep(10000);
         // Clean and notify completed passengers
         for (int station = 0; station < SECURITY_STATIONS; station++) {
             if (security_stations[station].usage == 0) continue;

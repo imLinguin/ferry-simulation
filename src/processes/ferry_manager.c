@@ -95,8 +95,7 @@ int main(int argc, char** argv) {
     while (shared_state->port_open) {
         sem_wait_single(sem_current_ferry, 0);
         is_active = 1;
-        int ramp_slots = RAMP_CAPACITY;
-        
+
         sem_wait_single(sem_state_mutex, 0);
 
         log_message(log_queue, ROLE, ferry_id, "Ferry manager updating current ferry state");
@@ -109,39 +108,39 @@ int main(int argc, char** argv) {
         // Wait for boarding to complete or early departure signal
         time_t boarding_start = time(NULL);
         should_depart = 0;
-        
+
+        sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY);
+
         // Handle ramp queue while active
-        while (!should_depart && 
-               (time(NULL) - boarding_start) < FERRY_DEPARTURE_INTERVAL &&
-               shared_state->port_open) {
-            
+        while (1) {
+            int gate_close;
             RampMessage ramp_msg;
+
+            gate_close = should_depart ||
+               (time(NULL) - boarding_start) >= FERRY_DEPARTURE_INTERVAL ||
+               !shared_state->port_open;
+
             // Process ramp queue: -RAMP_PRIORITY_REGULAR means receive exit(1), VIP(2), or regular(3) - VIP has priority
             if (msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
                     // Passenger leaving ramp
-                    ramp_slots++;
-                    sem_signal_single_noundo(sem_ramp_slots, 0); // Release semaphore slot
-                    log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp (slots: %d)", ramp_msg.passenger_id, ramp_slots);
-                } else if (ramp_slots > 0) {
-                    // Grant ramp access
-                    ramp_slots--;
-                    log_message(log_queue, ROLE, ferry_id, "Granting ramp to passenger %d (VIP: %d, slots: %d)", 
-                                ramp_msg.passenger_id, ramp_msg.mtype == RAMP_PRIORITY_VIP, ramp_slots);
-                    ramp_msg.mtype = ramp_msg.pid;  // Response to specific passenger
-                    msgsnd(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), 0);
+                    if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, 0); // Release semaphore slot
+                    log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp", ramp_msg.passenger_id);
                 } else {
-                    // No slots available, re-queue with same priority
+                    // Grant ramp access
+                    log_message(log_queue, ROLE, ferry_id, "Granting ramp to passenger %d (VIP: %d)",
+                                ramp_msg.passenger_id, ramp_msg.mtype == RAMP_PRIORITY_VIP);
+                    ramp_msg.mtype = ramp_msg.pid;  // Response to specific passenger
                     msgsnd(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), 0);
                 }
             }
+
+            // Ensure ramp is empty before departing
+            if (gate_close && (sem_get_val(sem_ramp_slots, 0) == 0)) break;
             
             usleep(10000); // 10ms sleep to avoid busy waiting
         }
-        should_depart = 0;
-        
-        // Ensure ramp is empty before departing
-
+        log_message(log_queue, ROLE, ferry_id, "Gate closing");
         sem_wait_single(sem_state_mutex, 0);
         
         log_message(log_queue, ROLE, ferry_id, "Ferry departing");

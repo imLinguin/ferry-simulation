@@ -157,6 +157,7 @@ int main(int argc, char** argv) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to request ramp access");
             sem_signal_single_noundo(sem_ramp_slots, 0);
+            perror("Passenger ramp send error");
             goto cleanup;
         }
     }
@@ -165,6 +166,7 @@ int main(int argc, char** argv) {
     while(msgrcv(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), getpid(), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to receive ramp permission");
+            perror("Passenger ramp rcv error");
             sem_signal_single_noundo(sem_ramp_slots, 0);
             goto cleanup;
         }
@@ -173,8 +175,11 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
     
     // Simulate boarding time
-    sleep(PASSENGER_BOARDING_TIME);
-    
+    time_t boarding_start = time(NULL);
+    while ((time(NULL) - boarding_start) < PASSENGER_BOARDING_TIME) {
+        usleep(100000);
+    }
+
     // Signal exit from ramp
     ramp_message.mtype = RAMP_MESSAGE_EXIT;
     ramp_message.pid = getpid();
@@ -182,6 +187,7 @@ int main(int argc, char** argv) {
     while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to signal ramp exit");
+            perror("Passenger ramp exit error");
             goto cleanup;
         }
     }
@@ -190,11 +196,6 @@ int main(int argc, char** argv) {
     log_message(log_queue, ROLE, passenger_id, "Boarded successfully");
     
 cleanup:
-    queue_close(log_queue);
-    queue_close(queue_security);
-    queue_close(queue_ramp);
-    sem_close(sem_state_mutex);
-    sem_close(sem_security);
-    sem_close(sem_ramp_slots);
+    log_message(log_queue, ROLE, passenger_id, "Pasenger exiting errno: %d", errno);
     return 0;
 }

@@ -53,11 +53,28 @@ int sem_close(int sem_id) {
 }
 
 void sem_close_if_exists(key_t sem_key) {
-    int sem_id = semget(sem_key, 0, 0);
+    int sem_id = semget(sem_key, 1, 0);
     if (sem_id != -1) {
         sem_close(sem_id);
     }
 }
+
+int sem_get_val(int sem_id, unsigned short sem_num) {
+    int retval;
+    while ((retval = semctl(sem_id, sem_num, GETVAL)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
+}
+
+int sem_set_noundo(int sem_id, unsigned short sem_num, int value) {
+    int retval;
+    while ((retval = semctl(sem_id, sem_num, SETVAL, value)) == -1) {
+        if (errno != EINTR) break;
+    }
+    return retval;
+}
+
 
 int sem_wait_single_noundo(int sem_id, unsigned short sem_num) {
     int retval;

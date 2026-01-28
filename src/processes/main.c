@@ -95,7 +95,6 @@ int main(int argc, char **argv) {
     sem_close_if_exists(sem_ramp_key);
     sem_close_if_exists(sem_ramp_slots_key);
     sem_close_if_exists(sem_current_ferry_key);
-
     printf("Initializing queues\n");
     // Create queues
     if ((log_queue_id = queue_create(queue_log_key)) == -1) {
@@ -124,7 +123,7 @@ int main(int argc, char **argv) {
         shm_close(shm_id);
         return 1;
     }
-    
+
     // Initialize shared state
     shared_state->port_open = 1;
     shared_state->current_ferry_id = -1;
@@ -167,8 +166,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // FIXME: USE a ulimit ?
-    unsigned short ramp_slots_init = RAMP_CAPACITY;
+    unsigned short ramp_slots_init = 0;
     if ((sem_ramp_slots = sem_create(sem_ramp_slots_key, 1, &ramp_slots_init)) == -1) {
         perror("Failed to create ramp slots semaphore");
         sem_close(sem_state_mutex);
@@ -227,6 +225,7 @@ int main(int argc, char **argv) {
     sem_close(sem_ramp_slots);
     sem_close(sem_security);
     sem_close(sem_state_mutex);
+    sem_close(sem_current_ferry);
     shm_close(shm_id);
     queue_close_if_exists(queue_security_key);
     queue_close_if_exists(queue_ramp_key);
