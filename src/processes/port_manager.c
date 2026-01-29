@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
     
     // Wait for all ferry managers and passengers
     int counter = 0;
-    while (counter < (PASSENGER_COUNT + FERRY_COUNT + 1)) {
+    while (counter < (PASSENGER_COUNT + FERRY_COUNT)) {
         if (waitpid(0, NULL, WNOHANG) > 0) {
             counter++;
         }

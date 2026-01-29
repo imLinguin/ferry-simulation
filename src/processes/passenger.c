@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
     key_t shm_key;
 
     struct sigaction sa;
-    
+
     if (argc < 3) return 1;
 
     sa.sa_handler = handler;
@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
     }
 
     passenger_id = atoi(argv[2]);
-    
+
     // Open IPC resources
     log_queue_key = ftok(argv[1], IPC_KEY_LOG_ID);
     key_security = ftok(argv[1], IPC_KEY_QUEUE_SECURITY_ID);
@@ -71,17 +71,17 @@ int main(int argc, char** argv) {
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
     sem_ramp_slots_key = ftok(argv[1], IPC_KEY_SEM_RAMP_SLOTS_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
-    
+
     if (log_queue_key != -1) {
         log_queue = queue_open(log_queue_key);
     }
-    
+
     queue_security = queue_open(key_security);
     queue_ramp = queue_open(key_ramp);
     sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
     sem_security = sem_open(sem_security_key, 1);
     sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
-    
+
     shm_id = shm_open(shm_key);
     shm = shm_attach(shm_id);
 
@@ -89,21 +89,25 @@ int main(int argc, char** argv) {
         perror("Failed to init passenger");
         return 1;
     }
-    
+
     // Initialize passenger ticket
     ticket.state = PASSENGER_CHECKIN;
     ticket.gender = (rand() % 1) + 1;
     ticket.vip = (rand() % 10 < 2) ? 1 : 0;
-    ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN + 
+    ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
-    
+
     log_message(log_queue, ROLE, passenger_id, "Passenger created");
     ticket.state = PASSENGER_BAG_CHECK;
     log_message(log_queue, ROLE, passenger_id, "At baggage check");
-    
+
     // Baggage check: is current ferry suitable for us?
     while(1) {
-        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
+        while (sem_wait_single_nointr(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY) == -1) {
+            if (errno == EINTR) { PORT_CLOSED_RETURN; continue; }
+            shm_detach(shm);
+            return 1;
+        }
         if (shm->current_ferry_id != -1) {
             if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
                 log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit");
@@ -117,13 +121,14 @@ int main(int argc, char** argv) {
         usleep(100);
     }
     shm_detach(shm);
-    
+
     ticket.state = PASSENGER_WAITING;
     log_message(log_queue, ROLE, passenger_id, "Passed baggage check");
-    
+
     log_message(log_queue, ROLE, passenger_id, "Waiting for security");
     PORT_CLOSED_RETURN;
-    sem_wait_single(sem_security, 0);
+    while (sem_wait_single_nointr(sem_security, 0) == -1) if (errno == EINTR) { PORT_CLOSED_RETURN }
+
     security_message.mtype = SECURITY_MESSAGE_MANAGER_ID;
     security_message.gender = ticket.gender;
     security_message.pid = getpid();
@@ -144,19 +149,21 @@ int main(int argc, char** argv) {
     }
     sem_signal_single(sem_security, 0);
     PORT_CLOSED_RETURN;
-    
+
     ticket.state = PASSENGER_BOARDING;
     log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board");
-    
+
     // Wait for ramp slot availability (prevents queue overflow)
     log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
+
+    // TODO: Early return on interrupt here and support VIPs access too
     sem_wait_single_noundo(sem_ramp_slots, 0);
-    
+
     // Request ramp access via message queue
     ramp_message.mtype = ticket.vip ? RAMP_PRIORITY_VIP : RAMP_PRIORITY_REGULAR;
     ramp_message.pid = getpid();
     ramp_message.passenger_id = passenger_id;
-    
+
     log_message(log_queue, ROLE, passenger_id, "Requesting ramp access (VIP: %d)", ticket.vip);
     while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
         if (errno != EINTR) {
@@ -166,7 +173,7 @@ int main(int argc, char** argv) {
             goto cleanup;
         }
     }
-    
+
     // Wait for permission from ramp manager
     while(msgrcv(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), getpid(), 0) == -1) {
         if (errno != EINTR) {
@@ -176,9 +183,9 @@ int main(int argc, char** argv) {
             goto cleanup;
         }
     }
-    
+
     log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
-    
+
     // Simulate boarding time
     time_t boarding_start = time(NULL);
     while ((time(NULL) - boarding_start) < PASSENGER_BOARDING_TIME) {
@@ -199,7 +206,7 @@ int main(int argc, char** argv) {
 
     ticket.state = PASSENGER_BOARDED;
     log_message(log_queue, ROLE, passenger_id, "Boarded successfully");
-    
+
 cleanup:
     log_message(log_queue, ROLE, passenger_id, "Pasenger exiting errno: %d", errno);
     return 0;
