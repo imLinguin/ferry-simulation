@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <errno.h>
 
 #include "common/ipc.h"
 #include "common/logging.h"
@@ -22,5 +23,5 @@ void log_message(int queue, Role role, int identifier, const char* message, ...)
 
     va_end(args);
 
-    msgsnd(queue, &msg, MSG_SIZE(msg), 0);
+    while (msgsnd(queue, &msg, MSG_SIZE(msg), 0) == -1 && errno == EINTR) {}
 }

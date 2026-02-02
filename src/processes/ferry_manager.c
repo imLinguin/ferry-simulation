@@ -157,7 +157,6 @@ int main(int argc, char** argv) {
             usleep(10000); // 10ms sleep to avoid busy waiting
         }
         log_message(log_queue, ROLE, ferry_id, "Gate closing");
-        sem_wait_single(sem_state_mutex, 0);
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         log_message(log_queue, ROLE, ferry_id, "Ferry departing");
         shared_state->current_ferry_id = -1;
@@ -168,15 +167,20 @@ int main(int argc, char** argv) {
         END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
 
-        sem_signal_single(sem_state_mutex, 0);
         END_SEMAPHORE(sem_current_ferry, 0);
         is_active = 0;
 
         // Travel
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
-        sleep(FERRY_TRAVEL_TIME);
+        time_t travel_start = time(NULL);
+        while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
+            usleep(10 * 1000);
+        }
         log_message(log_queue, ROLE, ferry_id, "Ferry returning");
-        sleep(FERRY_TRAVEL_TIME);
+        travel_start = time(NULL);
+        while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
+            usleep(10 * 1000);
+        }
         
         // Return
         sem_wait_single(sem_state_mutex, 0);

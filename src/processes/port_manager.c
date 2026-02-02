@@ -234,7 +234,7 @@ int run_security_manager(const char* ipc_key) {
         if (pending.pid) goto try_insert;
         int no_block = pending.pid + internal_queue.pid != 0 || capacity != initial_capacity;
         if(msgrcv(queue_security, &msg, MSG_SIZE(msg), 1, no_block ? IPC_NOWAIT : 0) == -1) {
-            if (errno == EINVAL) break;
+            if (errno == EINVAL || errno == EIDRM) break;
             if (errno == EINTR) continue;
             if (errno == ENOMSG) goto try_insert;
             perror("Security manager: msgrcv failed");
