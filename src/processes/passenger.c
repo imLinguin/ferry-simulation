@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
 
     // Initialize passenger ticket
     ticket.state = PASSENGER_CHECKIN;
-    ticket.gender = (rand() % 1) + 1;
+    ticket.gender = (rand() % 2) + 1;
     ticket.vip = (rand() % 10 < 2) ? 1 : 0;
     ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
