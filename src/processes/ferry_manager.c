@@ -93,20 +93,19 @@ int main(int argc, char** argv) {
     }
     
     log_message(log_queue, ROLE, ferry_id, "Ferry manager started");
-    log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
-    
+
     // Ferry main loop: board passengers, depart, travel, return
     while (1) {
-        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
-        if (!shared_state->port_open)
-        {
-            sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
-            break;
-        }
-        sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
-
+        if (!shared_state->port_open) break;
+        log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
         START_SEMAPHORE(sem_current_ferry, 0)
         is_active = 1;
+
+        if (!shared_state->port_open) {
+            log_message(log_queue, ROLE, ferry_id, "Ferry manager - port is closed");
+            sem_signal_single(sem_current_ferry,0);
+            break;
+        }
 
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         log_message(log_queue, ROLE, ferry_id, "Ferry manager updating current ferry state");
@@ -115,6 +114,8 @@ int main(int argc, char** argv) {
 
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
+        shared_state->ferries[ferry_id].baggage_weight_total = 0;
+        shared_state->ferries[ferry_id].passenger_count = 0;
         log_message(log_queue, ROLE, ferry_id, "Ferry is now boarding");
         END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
@@ -135,11 +136,15 @@ int main(int argc, char** argv) {
                !shared_state->port_open;
 
             // Process ramp queue: -RAMP_PRIORITY_REGULAR means receive exit(1), VIP(2), or regular(3) - VIP has priority
-            if (msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
+            if (shared_state->ferries[ferry_id].passenger_count < FERRY_CAPACITY && msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
                     // Passenger leaving ramp
                     if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, 0); // Release semaphore slot
                     usage--;
+                    START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+                    shared_state->ferries[ferry_id].passenger_count++;
+                    shared_state->ferries[ferry_id].baggage_weight_total += ramp_msg.weight;
+                    END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
                     log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp", ramp_msg.passenger_id);
                 } else {
                     // Grant ramp access
@@ -151,8 +156,9 @@ int main(int argc, char** argv) {
                 }
             }
 
+            int semval = sem_get_val(sem_ramp_slots, 0);
             // Ensure ramp is empty before departing
-            if (gate_close && !usage && (sem_get_val(sem_ramp_slots, 0) == 0)) break;
+            if (gate_close && !usage && (semval == 0 || semval == RAMP_CAPACITY)) break;
             
             usleep(10000); // 10ms sleep to avoid busy waiting
         }
@@ -166,9 +172,13 @@ int main(int argc, char** argv) {
         shared_state->ferries[ferry_id].status = FERRY_DEPARTED;
         END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
-
         END_SEMAPHORE(sem_current_ferry, 0);
         is_active = 0;
+
+        if (!shared_state->ferries[ferry_id].passenger_count && !shared_state->port_open) {
+            log_message(log_queue, ROLE, ferry_id, "Ferry departure - empty");
+            break;
+        }
 
         // Travel
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
@@ -183,7 +193,7 @@ int main(int argc, char** argv) {
         }
         
         // Return
-        sem_wait_single(sem_state_mutex, 0);
+        START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         
         shared_state->ferries[ferry_id].status = FERRY_WAITING_IN_QUEUE;
         shared_state->ferries[ferry_id].passenger_count = 0;
@@ -191,7 +201,7 @@ int main(int argc, char** argv) {
         
         log_message(log_queue, ROLE, ferry_id, "Ferry returned to queue");
         
-        sem_signal_single(sem_state_mutex, 0);
+        END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
     }
     log_message(log_queue, ROLE, ferry_id, "Ferry exiting");
     shm_detach(shared_state);

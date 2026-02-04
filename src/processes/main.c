@@ -246,6 +246,7 @@ int logger_loop(int queue_id) {
     int status = 0;
     struct tm *time;
     struct sigaction sa;
+    int termcolor = 31;
 
     sa.sa_handler = SIG_IGN;
     sigemptyset(&sa.sa_mask);
@@ -275,13 +276,15 @@ int logger_loop(int queue_id) {
             break;
         }
         time = localtime(&msg.timestamp);
-        strftime(time_buf, sizeof(time_buf), "(%d-%m-%Y %H:%M:%S)", time);
+        strftime(time_buf, sizeof(time_buf), "(%H:%M:%S)", time);
+        termcolor = 31 + ((msg.mtype-1) % 7);
+        printf("\033[0;%dm", termcolor);
         if (msg.identifier == -1) {
-            printf("%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);
+            printf("%s [%s] %s\033[0m\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);
             fprintf(log_file, "%s [%s] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.message);       
         }
         else {
-            printf("%s [%s_%04d] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
+            printf("%s [%s_%04d] %s\033[0m\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
             fprintf(log_file, "%s [%s_%04d] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
         }
     }

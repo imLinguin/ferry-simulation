@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     key_t shm_key;
     key_t sem_state_mutex_key;
     key_t sem_ramp_key;
-    
+
     int log_queue = -1;
     int shm_id;
     int sem_ramp;
@@ -59,23 +59,23 @@ int main(int argc, char** argv) {
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
     sem_ramp_key = ftok(argv[1], IPC_KEY_SEM_RAMP_ID);
-    
+
     if (logger_key != -1) {
         log_queue = queue_open(logger_key);
     }
-    
+
     shm_id = shm_open(shm_key);
     if (shm_id == -1) {
         perror("Port manager: Failed to open shared memory");
         return 1;
     }
-    
+
     shared_state = (SharedState*)shm_attach(shm_id);
     if (shared_state == (void*)-1) {
         perror("Port manager: Failed to attach shared memory");
         return 1;
     }
-    
+
     sem_state_mutex = sem_open(sem_state_mutex_key, 1);
     sem_ramp = sem_open(sem_ramp_key, 1);
 
@@ -93,10 +93,10 @@ int main(int argc, char** argv) {
     char passenger_path[255];
     char ferry_id_arg[16];
     char passenger_id_arg[16];
-    
+
     snprintf(ferry_manager_path, sizeof(ferry_manager_path), "%s/ferry-manager", bin_dir);
     snprintf(passenger_path, sizeof(passenger_path), "%s/passenger", bin_dir);
-    
+
     pid_t ferry_pids[FERRY_COUNT];
     pid_t passenger_pids[PASSENGER_COUNT];
     pid_t security_manager;
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
     else if (security_manager == 0) {
         return run_security_manager(argv[1]);
     }
-    
+
     // Spawn ferry managers
     for (int i = 0; i < FERRY_COUNT; i++) {
         snprintf(ferry_id_arg, sizeof(ferry_id_arg), "%d", i);
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    
+
     // Spawn passengers
     for (int i = 0; i < PASSENGER_COUNT; i++) {
         snprintf(passenger_id_arg, sizeof(passenger_id_arg), "%d", i);
@@ -136,19 +136,41 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    
+
     log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
-    
+
     // Wait for all ferry managers and passengers
     int counter = 0;
-    while (counter < (PASSENGER_COUNT + FERRY_COUNT)) {
+    int ferry_counter = 0;
+    while (counter < PASSENGER_COUNT) {
+        for (int i=0 ;i < FERRY_COUNT;i++) {
+            if (waitpid(ferry_pids[i], NULL, WNOHANG) > 0) {
+                ferry_counter++;
+            }
+        }
         if (waitpid(0, NULL, WNOHANG) > 0) {
             counter++;
+        }
+    loopsleep:
+        usleep(10000);
+    }
+
+    log_message(log_queue, ROLE, -1, "All passengers exited. Marking port as closed.");
+
+    sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+    shared_state->port_open = 0;
+    sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
+
+    while (ferry_counter < FERRY_COUNT) {
+        for (int i=0 ;i < FERRY_COUNT; i++) {
+            if (waitpid(ferry_pids[i], NULL, WNOHANG) > 0) {
+                ferry_counter++;
+            }
         }
         usleep(10000);
     }
 
-    log_message(log_queue, ROLE, -1, "Port manager exiting, counter is %d", counter);
+    log_message(log_queue, ROLE, -1, "Port manager exiting");
     shm_detach(shared_state);
 
     return 0;
@@ -280,7 +302,7 @@ int run_security_manager(const char* ipc_key) {
                     msg.mtype = security_stations[station].slots[slot].pid;
                     msg.passenger_id = security_stations[station].slots[slot].passenger_id;
                     msg.gender = security_stations[station].gender;
-                    
+
                     log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security", msg.passenger_id);
                     if (msgsnd(queue_security, &msg, MSG_SIZE(msg), 0)) {
                         perror("Failed to send message back to user");

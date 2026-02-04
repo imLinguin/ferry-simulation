@@ -163,6 +163,7 @@ int main(int argc, char** argv) {
     ramp_message.mtype = ticket.vip ? RAMP_PRIORITY_VIP : RAMP_PRIORITY_REGULAR;
     ramp_message.pid = getpid();
     ramp_message.passenger_id = passenger_id;
+    ramp_message.weight = ticket.bag_weight;
 
     log_message(log_queue, ROLE, passenger_id, "Requesting ramp access (VIP: %d)", ticket.vip);
     while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
