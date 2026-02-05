@@ -50,6 +50,7 @@ int sem_set_noundo(int sem_id, unsigned short sem_num, int val);
 int sem_wait_single_noundo(int sem_id, unsigned short sem_num);
 int sem_wait_single(int sem_id, unsigned short sem_num);
 int sem_wait_single_nointr(int sem_id, unsigned short sem_num);
+int sem_wait_single_nointr_noundo(int sem_id, unsigned short sem_num);
 int sem_signal_single_noundo(int sem_id, unsigned short sem_num);
 int sem_signal_single(int sem_id, unsigned short sem_num);
 

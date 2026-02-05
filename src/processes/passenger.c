@@ -58,6 +58,10 @@ int main(int argc, char** argv) {
         perror("Failed to setup signal handler");
         return 1;
     }
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
     if (sigaction(SIGINT, &sa, NULL) == -1) {
         perror("Failed to setup signal handler");
         return 1;
@@ -116,11 +120,11 @@ int main(int argc, char** argv) {
                 sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
                 break;
             }
-            // log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
+            log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;
-        usleep(100 * 1000);
+        sleep(1);
     }
     shm_detach(shm);
 
@@ -158,7 +162,9 @@ int main(int argc, char** argv) {
     // Wait for ramp slot availability (prevents queue overflow)
     log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
 
-    sem_wait_single_noundo(sem_ramp_slots, ticket.vip);
+    while(sem_wait_single_nointr_noundo(sem_ramp_slots, ticket.vip) == -1) {
+        if (errno == EINTR) { PORT_CLOSED_RETURN; continue; }
+    }
 
     // Request ramp access via message queue
     ramp_message.mtype = ticket.vip ? RAMP_PRIORITY_VIP : RAMP_PRIORITY_REGULAR;

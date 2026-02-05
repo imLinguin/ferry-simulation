@@ -100,6 +100,11 @@ int sem_wait_single_nointr(int sem_id, unsigned short sem_num) {
     return semop(sem_id, &op, 1);
 }
 
+int sem_wait_single_nointr_noundo(int sem_id, unsigned short sem_num) {
+    struct sembuf op = {sem_num, -1, SEM_UNDO};
+    return semop(sem_id, &op, 1);
+}
+
 int sem_signal_single_noundo(int sem_id, unsigned short sem_num) {
     int retval;
     struct sembuf op = {sem_num, 1, 0};

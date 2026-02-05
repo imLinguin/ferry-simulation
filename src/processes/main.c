@@ -68,6 +68,10 @@ int main(int argc, char **argv) {
         perror("Failed to setup signal handler");
         return 1;
     }
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
 
     srand(time(NULL) ^ getpid());
 
@@ -259,6 +263,11 @@ int logger_loop(int queue_id) {
     }
 
     if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+        perror("Failed to setup signal handler");
+        return 1;
+    }
+    
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
         perror("Failed to setup signal handler");
         return 1;
     }

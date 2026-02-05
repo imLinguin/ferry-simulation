@@ -23,6 +23,7 @@ SharedState* shared_state;
 
 static void handle_signal(int signal) {
     if (signal == SIGINT) {
+        kill(0, SIGUSR2);
         kill(0, SIGUSR1);
         sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
         shared_state->port_open = 0;
