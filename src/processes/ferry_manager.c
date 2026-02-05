@@ -46,6 +46,8 @@ int main(int argc, char** argv) {
     int sem_state_mutex;
     int sem_current_ferry;
     int sem_ramp_slots;
+    int had_passengers = 0;
+
     SharedState* shared_state;
 
     key_t shm_key;
@@ -176,6 +178,12 @@ int main(int argc, char** argv) {
                     shared_state->ferries[ferry_id].baggage_weight_total += ramp_msg.weight;
                     current_count = shared_state->ferries[ferry_id].passenger_count;
                     END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+                    
+                    // Update boarded statistics
+                    START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+                    shared_state->stats.passengers_boarded++;
+                    END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+                    
                     log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp (current_capacity: %d/%d)",
                                 ramp_msg.passenger_id, current_count, FERRY_CAPACITY);
                 } else {
@@ -236,12 +244,20 @@ int main(int argc, char** argv) {
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         
         shared_state->ferries[ferry_id].status = FERRY_WAITING_IN_QUEUE;
+        had_passengers = shared_state->ferries[ferry_id].passenger_count;
         shared_state->ferries[ferry_id].passenger_count = 0;
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
         
-        log_message(log_queue, ROLE, ferry_id, "Ferry returned to queue");
-        
         END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+        
+        // Update trip statistics if ferry had passengers
+        if (had_passengers > 0) {
+            START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+            shared_state->stats.total_ferry_trips++;
+            END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+        }
+        
+        log_message(log_queue, ROLE, ferry_id, "Ferry returned to queue");
     }
     log_message(log_queue, ROLE, ferry_id, "Ferry exiting");
     shm_detach(shared_state);

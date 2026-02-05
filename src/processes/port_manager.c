@@ -160,6 +160,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Update spawned passengers count
+    sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+    shared_state->stats.passengers_spawned = PASSENGER_COUNT;
+    sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+
     log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
 
     // Monitor child processes: wait for all passengers to complete, then close port
@@ -266,8 +271,13 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
 int run_security_manager(const char* ipc_key) {
     key_t queue_security_key;
     key_t queue_log_key;
+    key_t shm_key;
+    key_t sem_state_mutex_key;
     int queue_security;
     int queue_log;
+    int shm_id;
+    int sem_state_mutex;
+    SharedState* shared_state;
 
     int initial_capacity = SECURITY_STATIONS * SECURITY_STATION_CAPACITY;
     int capacity = initial_capacity;
@@ -288,6 +298,8 @@ int run_security_manager(const char* ipc_key) {
 
     queue_security_key = ftok(ipc_key, IPC_KEY_QUEUE_SECURITY_ID);
     queue_log_key = ftok(ipc_key, IPC_KEY_LOG_ID);
+    shm_key = ftok(ipc_key, IPC_KEY_SHM_ID);
+    sem_state_mutex_key = ftok(ipc_key, IPC_KEY_SEM_STATE_ID);
 
     if (queue_security_key == -1) {
         perror("Security manager: Failed to open semaphores");
@@ -296,6 +308,25 @@ int run_security_manager(const char* ipc_key) {
 
     queue_security = queue_open(queue_security_key);
     queue_log = queue_open(queue_log_key);
+    
+    shm_id = shm_open(shm_key);
+    if (shm_id == -1) {
+        perror("Security manager: Failed to open shared memory");
+        return 1;
+    }
+    
+    shared_state = (SharedState*)shm_attach(shm_id);
+    if (shared_state == (void*)-1) {
+        perror("Security manager: Failed to attach shared memory");
+        return 1;
+    }
+    
+    sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
+    if (sem_state_mutex == -1) {
+        perror("Security manager: Failed to open semaphore");
+        shm_detach(shared_state);
+        return 1;
+    }
 
     // Initialize security state: no pending requests, all stations empty
     pending.pid = 0;
@@ -369,6 +400,12 @@ int run_security_manager(const char* ipc_key) {
                     if (msgsnd(queue_security, &msg, MSG_SIZE(msg), 0)) {
                         perror("Failed to send message back to user");
                     }
+                    
+                    // Update screened statistics
+                    sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+                    shared_state->stats.passengers_screened++;
+                    sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+                    
                     security_stations[station].usage--;
                     security_stations[station].slots[slot].pid = 0;
                     capacity++;
@@ -377,5 +414,6 @@ int run_security_manager(const char* ipc_key) {
         }
     }
 
+    shm_detach(shared_state);
     return 0;
 }

@@ -18,11 +18,19 @@ typedef struct FerryState {
     FerryStatus status;
 } FerryState;
 
+typedef struct SimulationStats {
+    int passengers_spawned;
+    int passengers_boarded;
+    int passengers_rejected_baggage;
+    int total_ferry_trips;
+    int passengers_screened;
+} SimulationStats;
 
 typedef struct SharedState {
     int port_open;
     int current_ferry_id;
     FerryState ferries[FERRY_COUNT];
+    SimulationStats stats;
 } SharedState;
 
 #endif

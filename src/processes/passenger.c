@@ -143,6 +143,11 @@ int main(int argc, char** argv) {
             }
             log_message(log_queue, ROLE, passenger_id, "BAGGAGE_REJECTED - bag: %d exceeds ferry_limit: %d",
                         ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
+            
+            // Update rejection statistics
+            sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
+            shm->stats.passengers_rejected_baggage++;
+            sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;

@@ -138,6 +138,12 @@ int main(int argc, char **argv) {
     shared_state->port_open = 1;
     shared_state->current_ferry_id = -1;
   
+    // Initialize statistics
+    shared_state->stats.passengers_spawned = 0;
+    shared_state->stats.passengers_boarded = 0;
+    shared_state->stats.passengers_rejected_baggage = 0;
+    shared_state->stats.total_ferry_trips = 0;
+    shared_state->stats.passengers_screened = 0;
     
     for (int i = 0; i < FERRY_COUNT; i++) {
         shared_state->ferries[i].ferry_id = i;
@@ -149,7 +155,7 @@ int main(int argc, char **argv) {
     
     printf("Initializing semaphores\n");
     // Create semaphores
-    unsigned short state_mutex_init[SEM_STATE_MUTEX_VARIANT_COUNT] = {1, 1, 1};
+    unsigned short state_mutex_init[SEM_STATE_MUTEX_VARIANT_COUNT] = {1, 1, 1, 1};
     if ((sem_state_mutex = sem_create(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT, state_mutex_init)) == -1) {
         perror("Failed to create state mutex semaphore");
         shm_detach(shared_state);
@@ -227,6 +233,20 @@ int main(int argc, char **argv) {
         return 0;
     }
     waitpid(manager_pid, NULL, 0);
+    
+    // Print final statistics
+    shared_state = (SharedState*)shm_attach(shm_id);
+    if (shared_state != (void*)-1) {
+        printf("\n=== Simulation Statistics ===\n");
+        printf("Passengers spawned:                   %d\n", shared_state->stats.passengers_spawned);
+        printf("Passengers screened:                  %d\n", shared_state->stats.passengers_screened);
+        printf("Passengers boarded:                   %d\n", shared_state->stats.passengers_boarded);
+        printf("Passengers rejected attempts (bag):   %d\n", shared_state->stats.passengers_rejected_baggage);
+        printf("Total ferry trips:                    %d\n", shared_state->stats.total_ferry_trips);
+        printf("=============================\n\n");
+        shm_detach(shared_state);
+    }
+    
     queue_close_if_exists(queue_log_key);
     waitpid(logger_pid, NULL, 0);
     
