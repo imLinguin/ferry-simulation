@@ -117,7 +117,8 @@ int main(int argc, char** argv) {
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
         shared_state->ferries[ferry_id].passenger_count = 0;
-        log_message(log_queue, ROLE, ferry_id, "Ferry is preparing for boarding");
+        log_message(log_queue, ROLE, ferry_id, "Ferry is preparing for boarding (baggage_limit: %d, capacity: %d)",
+                    shared_state->ferries[ferry_id].baggage_limit, FERRY_CAPACITY);
         END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
         // Open gate for boarding
@@ -142,8 +143,7 @@ int main(int argc, char** argv) {
             RampMessage ramp_msg;
 
             gate_close = should_depart ||
-               (time(NULL) - boarding_start) >= FERRY_DEPARTURE_INTERVAL ||
-               !shared_state->port_open;
+               (time(NULL) - boarding_start) >= FERRY_DEPARTURE_INTERVAL;
 
             // Process ramp queue: -RAMP_PRIORITY_REGULAR means receive exit(1), VIP(2), or regular(3) - VIP has priority
             if (shared_state->ferries[ferry_id].passenger_count < FERRY_CAPACITY && msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
@@ -151,11 +151,14 @@ int main(int argc, char** argv) {
                     // Passenger leaving ramp
                     if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, ramp_msg.is_vip); // Release semaphore slot
                     usage--;
+                    int current_count;
                     START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
                     shared_state->ferries[ferry_id].passenger_count++;
                     shared_state->ferries[ferry_id].baggage_weight_total += ramp_msg.weight;
+                    current_count = shared_state->ferries[ferry_id].passenger_count;
                     END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
-                    log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp", ramp_msg.passenger_id);
+                    log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp (current_capacity: %d/%d)",
+                                ramp_msg.passenger_id, current_count, FERRY_CAPACITY);
                 } else {
                     // Grant ramp access
                     log_message(log_queue, ROLE, ferry_id, "Granting ramp to passenger %d (VIP: %d)",
@@ -177,7 +180,9 @@ int main(int argc, char** argv) {
         }
         log_message(log_queue, ROLE, ferry_id, "Gate closing");
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
-        log_message(log_queue, ROLE, ferry_id, "Ferry departing");
+        log_message(log_queue, ROLE, ferry_id, "Ferry departing (final_passenger_count: %d, baggage_total: %d)",
+                    shared_state->ferries[ferry_id].passenger_count,
+                    shared_state->ferries[ferry_id].baggage_weight_total);
         shared_state->current_ferry_id = -1;
         END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
 

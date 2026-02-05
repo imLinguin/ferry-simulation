@@ -103,7 +103,8 @@ int main(int argc, char** argv) {
     ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
 
-    log_message(log_queue, ROLE, passenger_id, "Passenger created");
+    log_message(log_queue, ROLE, passenger_id, "Passenger created (gender: %s, VIP: %d, bag_weight: %d)",
+                ticket.gender == GENDER_MAN ? "MALE" : "FEMALE", ticket.vip, ticket.bag_weight);
     ticket.state = PASSENGER_BAG_CHECK;
     log_message(log_queue, ROLE, passenger_id, "At baggage check");
 
@@ -116,11 +117,13 @@ int main(int argc, char** argv) {
         }
         if (shm->current_ferry_id != -1) {
             if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
-                log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit");
+                log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit (bag: %d, ferry_limit: %d)",
+                            ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
                 sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
                 break;
             }
-            log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
+            log_message(log_queue, ROLE, passenger_id, "BAGGAGE_REJECTED - bag: %d exceeds ferry_limit: %d",
+                        ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;
@@ -146,7 +149,8 @@ int main(int argc, char** argv) {
             goto cleanup;
         }
     }
-    log_message(log_queue, ROLE, passenger_id, "Requested security station allocation");
+    log_message(log_queue, ROLE, passenger_id, "Requested security station allocation (gender: %s)",
+                ticket.gender == GENDER_MAN ? "MALE" : "FEMALE");
     while(msgrcv(queue_security, &security_message, MSG_SIZE(security_message), getpid(), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to get messege from security queue");
@@ -157,13 +161,15 @@ int main(int argc, char** argv) {
     PORT_CLOSED_RETURN;
 
     ticket.state = PASSENGER_BOARDING;
-    log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board");
+    log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board (gender: %s)",
+                ticket.gender == GENDER_MAN ? "MALE" : "FEMALE");
 
     // Wait for ramp slot availability (prevents queue overflow)
     log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
 
     while(sem_wait_single_nointr_noundo(sem_ramp_slots, ticket.vip) == -1) {
         if (errno == EINTR) { PORT_CLOSED_RETURN; continue; }
+        return 1;
     }
 
     // Request ramp access via message queue

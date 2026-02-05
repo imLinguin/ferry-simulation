@@ -205,6 +205,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
                     securityStations[station].slots[slot].finish_timestamp = time(NULL) + variation;
                     securityStations[station].slots[slot].passenger_id = msg->passenger_id;
                     securityStations[station].usage++;
+                    // Note: Log moved to caller for station tracking
                     found = 1;
                     break;
                 }
@@ -279,11 +280,18 @@ int run_security_manager(const char* ipc_key) {
         }
 
         if (pending.pid && (!internal_queue.pid || internal_queue.frustration < SECURITY_MAX_FRUSTRATION)) {
-            log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Attempting to insert pending passenger_id: %d", pending.passenger_id);
+            log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Attempting to insert pending passenger_id: %d (gender: %s)",
+                        pending.passenger_id, pending.gender == GENDER_MAN ? "MALE" : "FEMALE");
             if (security_try_insert(security_stations, &pending)) {
+                log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d assigned to security station (gender: %s)",
+                            pending.passenger_id, pending.gender == GENDER_MAN ? "MALE" : "FEMALE");
                 pending.pid = 0;
                 capacity--;
-                if(internal_queue.pid) internal_queue.frustration++;
+                if(internal_queue.pid) {
+                    internal_queue.frustration++;
+                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "FRUSTRATION_INCREMENT - passenger %d overtaken (frustration: %d)",
+                                internal_queue.passenger_id, internal_queue.frustration);
+                }
             }
             else if (!internal_queue.pid) {
                 log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "No slot found, adding to internal queue");
@@ -306,7 +314,8 @@ int run_security_manager(const char* ipc_key) {
                     msg.passenger_id = security_stations[station].slots[slot].passenger_id;
                     msg.gender = security_stations[station].gender;
 
-                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security", msg.passenger_id);
+                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security (station: %d, gender: %s)",
+                                msg.passenger_id, station, msg.gender == GENDER_MAN ? "MALE" : "FEMALE");
                     if (msgsnd(queue_security, &msg, MSG_SIZE(msg), 0)) {
                         perror("Failed to send message back to user");
                     }
