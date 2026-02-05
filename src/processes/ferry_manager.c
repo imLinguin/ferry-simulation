@@ -17,10 +17,27 @@
 volatile int should_depart = 0;
 volatile int is_active = 0;
 
+/**
+ * Signal handler for ferry manager.
+ * SIGUSR1: Triggers early departure when the ferry is active and boarding.
+ */
 static void handler(int signal) {
     if (is_active && signal == SIGUSR1) should_depart = 1;
 }
 
+/**
+ * Ferry Manager Process Entry Point.
+ * 
+ * Manages a single ferry throughout its lifecycle:
+ * 1. Waits for turn to dock
+ * 2. Opens boarding gate and processes passengers from the ramp queue
+ * 3. Handles early departure signals or waits for departure interval
+ * 4. Departs with passengers, travels, and returns
+ * 5. Repeats until the port closes
+ * 
+ * @param argc Argument count (expects at least 3)
+ * @param argv Arguments: [0]=program name, [1]=IPC key path, [2]=ferry ID
+ */
 int main(int argc, char** argv) {
     int ferry_id;
     int log_queue = -1;
@@ -61,7 +78,7 @@ int main(int argc, char** argv) {
     
     ferry_id = atoi(argv[2]);
     
-    // Open IPC resources
+    // Initialize IPC resources: queues, shared memory, and semaphores
     log_queue_key = ftok(argv[1], IPC_KEY_LOG_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
@@ -95,10 +112,11 @@ int main(int argc, char** argv) {
     
     log_message(log_queue, ROLE, ferry_id, "Ferry manager started");
 
-    // Ferry main loop: board passengers, depart, travel, return
+    // Ferry main loop: wait for turn, board passengers, depart, travel, and return
     while (1) {
         if (!shared_state->port_open) break;
         log_message(log_queue, ROLE, ferry_id, "Ferry manager waiting for semaphore");
+        // Wait for turn to become the active ferry at the dock
         START_SEMAPHORE(sem_current_ferry, 0)
         is_active = 1;
 
@@ -113,6 +131,7 @@ int main(int argc, char** argv) {
         shared_state->current_ferry_id = ferry_id;
         END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
 
+        // Initialize ferry state for boarding
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
@@ -121,7 +140,7 @@ int main(int argc, char** argv) {
                     shared_state->ferries[ferry_id].baggage_limit, FERRY_CAPACITY);
         END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
-        // Open gate for boarding
+        // Simulate gate opening delay, then open ramp slots for passenger boarding
         time_t boarding_delay_start = time(NULL);
         int boarding_delay = rand() % FERRY_GATE_MAX_DELAY;
         log_message(log_queue, ROLE, ferry_id, "Ferry gate will open in %d s", boarding_delay);
@@ -132,12 +151,12 @@ int main(int argc, char** argv) {
         sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY_REG);
         sem_set_noundo(sem_ramp_slots, 1, RAMP_CAPACITY_VIP);
 
-        // Wait for boarding to complete or early departure signal
+        // Process boarding: handle ramp queue until departure time or early signal
         time_t boarding_start = time(NULL);
         should_depart = 0;
         int usage = 0;
 
-        // Handle ramp queue while active
+        // Process ramp messages: grant access to passengers or handle passenger boarding exits
         while (1) {
             int gate_close;
             RampMessage ramp_msg;
@@ -148,7 +167,7 @@ int main(int argc, char** argv) {
             // Process ramp queue: -RAMP_PRIORITY_REGULAR means receive exit(1), VIP(2), or regular(3) - VIP has priority
             if (shared_state->ferries[ferry_id].passenger_count < FERRY_CAPACITY && msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
-                    // Passenger leaving ramp
+                    // Passenger completed boarding and is leaving the ramp area
                     if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, ramp_msg.is_vip); // Release semaphore slot
                     usage--;
                     int current_count;
@@ -160,7 +179,7 @@ int main(int argc, char** argv) {
                     log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp (current_capacity: %d/%d)",
                                 ramp_msg.passenger_id, current_count, FERRY_CAPACITY);
                 } else {
-                    // Grant ramp access
+                    // Grant ramp access to waiting passenger
                     log_message(log_queue, ROLE, ferry_id, "Granting ramp to passenger %d (VIP: %d)",
                                 ramp_msg.passenger_id, ramp_msg.mtype == RAMP_PRIORITY_VIP);
                     ramp_msg.mtype = ramp_msg.pid;  // Response to specific passenger
@@ -170,7 +189,7 @@ int main(int argc, char** argv) {
             }
 
             int semval = sem_get_val(sem_ramp_slots, 0);
-            // Ensure ramp is empty before departing
+            // Wait until all passengers on ramp have boarded before departing
             if (gate_close && !usage) {
                 log_message(log_queue, ROLE, ferry_id, "Sem usage on gate close: %d", semval);
                 break;
@@ -198,6 +217,7 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Ferry travel cycle: depart, travel to destination, and return
         // Travel
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
         time_t travel_start = time(NULL);
@@ -212,7 +232,7 @@ int main(int argc, char** argv) {
             log_message(log_queue, ROLE, ferry_id, "Returning: time left: %02d s", FERRY_TRAVEL_TIME - (time(NULL) - travel_start));
         }
         
-        // Return
+        // Update ferry state to indicate it's back in queue and ready for next trip
         START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
         
         shared_state->ferries[ferry_id].status = FERRY_WAITING_IN_QUEUE;

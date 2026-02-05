@@ -7,7 +7,16 @@
 #include "common/logging.h"
 #include "common/macros.h"
 
-
+/**
+ * Logs a formatted message to the logging message queue.
+ * This function sends log messages to a central logging queue for processing.
+ * 
+ * @param queue The message queue ID for logging
+ * @param role The role of the process sending the log (e.g., ROLE_PASSENGER, ROLE_FERRY_MANAGER)
+ * @param identifier Process-specific identifier (e.g., passenger ID, ferry ID)
+ * @param message Format string for the log message (printf-style)
+ * @param ... Variable arguments for the format string
+ */
 void log_message(int queue, Role role, int identifier, const char* message, ...) {
     if (queue == -1) return;
     LogMessage msg;

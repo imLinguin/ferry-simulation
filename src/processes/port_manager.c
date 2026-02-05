@@ -21,6 +21,10 @@
 int sem_state_mutex;
 SharedState* shared_state;
 
+/**
+ * Signal handler for port manager.
+ * SIGINT: Initiates graceful shutdown by notifying all processes and closing the port.
+ */
 static void handle_signal(int signal) {
     if (signal == SIGINT) {
         kill(0, SIGUSR2);
@@ -31,6 +35,23 @@ static void handle_signal(int signal) {
     }
 }
 
+/**
+ * Port Manager Process Entry Point.
+ * 
+ * Main orchestrator for the ferry simulation:
+ * 1. Initializes IPC resources (shared memory, semaphores, message queues)
+ * 2. Spawns all ferry managers and passenger processes
+ * 3. Spawns security manager for passenger screening
+ * 4. Monitors process completion and manages graceful shutdown
+ * 
+ * Responsible for:
+ * - Process lifecycle management
+ * - Coordinating port closure when all passengers have boarded
+ * - Ensuring all child processes terminate properly
+ * 
+ * @param argc Argument count (expects at least 2)
+ * @param argv Arguments: [0]=program path (used to derive child process paths), [1]=IPC key path
+ */
 int main(int argc, char** argv) {
     key_t logger_key;
     key_t shm_key;
@@ -56,7 +77,7 @@ int main(int argc, char** argv) {
         perror("PORTMANAGER Failed to register SIGUSR2");
     }
 
-    // Open IPC resources
+    // Initialize IPC resources: message queues, shared memory, and semaphores
     logger_key = ftok(argv[1], IPC_KEY_LOG_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
     sem_state_mutex_key = ftok(argv[1], IPC_KEY_SEM_STATE_ID);
@@ -89,7 +110,7 @@ int main(int argc, char** argv) {
 
     log_message(log_queue, ROLE, -1, "Port manager starting up");
 
-    // Derive paths from argv[1] (which contains the path from main's argv[0])
+    // Determine executable paths for child processes based on current binary location
     char* bin_dir = dirname(strdup(argv[1]));
     char ferry_manager_path[255];
     char passenger_path[255];
@@ -102,6 +123,7 @@ int main(int argc, char** argv) {
     pid_t ferry_pids[FERRY_COUNT];
     pid_t security_manager;
 
+    // Spawn security manager process for passenger screening
     security_manager = fork();
     if (security_manager == -1) {
         perror("Failed to spawn security manager");
@@ -110,7 +132,7 @@ int main(int argc, char** argv) {
         return run_security_manager(argv[1]);
     }
 
-    // Spawn ferry managers
+    // Spawn all ferry manager processes (one per ferry)
     for (int i = 0; i < FERRY_COUNT; i++) {
         snprintf(ferry_id_arg, sizeof(ferry_id_arg), "%d", i);
         ferry_pids[i] = fork();
@@ -124,7 +146,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Spawn passengers
+    // Spawn all passenger processes
     for (int i = 0; i < PASSENGER_COUNT; i++) {
         snprintf(passenger_id_arg, sizeof(passenger_id_arg), "%d", i);
         int passpid = fork();
@@ -140,7 +162,7 @@ int main(int argc, char** argv) {
 
     log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
 
-    // Wait for all ferry managers and passengers
+    // Monitor child processes: wait for all passengers to complete, then close port
     int counter = 0;
     int ferry_counter = 0;
     while (counter < PASSENGER_COUNT) {
@@ -156,12 +178,14 @@ int main(int argc, char** argv) {
         usleep(10000);
     }
 
+    // All passengers have boarded or exited - signal port closure
     log_message(log_queue, ROLE, -1, "All passengers exited. Marking port as closed.");
 
     sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
     shared_state->port_open = 0;
     sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
 
+    // Wait for all ferries to complete their final trips and exit
     while (ferry_counter < FERRY_COUNT) {
         for (int i=0 ;i < FERRY_COUNT; i++) {
             if (waitpid(ferry_pids[i], NULL, WNOHANG) > 0) {
@@ -177,18 +201,26 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-// Attempt to insert user ticket into the security station
-// Returns:
-// 0 - if no slot found
-// 1 - if user was inserted
+/**
+ * Attempts to assign a passenger to an available security station.
+ * 
+ * Security stations are gender-segregated. The function searches for:
+ * 1. Empty stations (any gender)
+ * 2. Stations with matching gender and available slots
+ * 
+ * @param securityStations Array of security station states
+ * @param msg Security message containing passenger info (gender, PID, passenger ID)
+ * @return 1 if passenger was assigned to a station, 0 if no slot found
+ */
 int security_try_insert(SecurityStationState *securityStations, SecurityMessage *msg) {
     int found = 0;
     int variation = (rand() % (PASSENGER_SECURITY_TIME_MAX - PASSENGER_SECURITY_TIME_MIN + 1)) + PASSENGER_SECURITY_TIME_MIN;
 
-    // Find appropriate security station to store user in
+    // Search for available security station matching passenger's gender
     for (int station = 0; station < SECURITY_STATIONS; station++) {
         // First look if the station is not occupied
         if (securityStations[station].usage == 0) {
+            // Initialize empty station with passenger's gender and assign first slot
             securityStations[station].gender = msg->gender;
             securityStations[station].slots[0].pid = msg->pid;
             securityStations[station].slots[0].finish_timestamp = time(NULL) + variation;
@@ -196,7 +228,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
             securityStations[station].usage++;
             found = 1;
         }
-        // In another case check if a slot is available and if user's gender matches the station
+        // Check if passenger's gender matches station and a slot is available
         else if (securityStations[station].usage == 1 && msg->gender == (Gender)securityStations[station].gender) {
             // Find an empty slot
             for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
@@ -217,6 +249,20 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
     return found;
 }
 
+/**
+ * Security Manager Process.
+ * 
+ * Manages passenger screening through gender-segregated security stations:
+ * - Receives security requests from passengers via message queue
+ * - Assigns passengers to appropriate stations based on gender
+ * - Implements frustration mechanism: passengers overtaken multiple times get priority
+ * - Notifies passengers when screening is complete
+ * 
+ * Uses an internal queue for passengers waiting when no matching station is available.
+ * 
+ * @param ipc_key Path used to generate IPC keys
+ * @return 0 on success, 1 on error
+ */
 int run_security_manager(const char* ipc_key) {
     key_t queue_security_key;
     key_t queue_log_key;
@@ -251,13 +297,16 @@ int run_security_manager(const char* ipc_key) {
     queue_security = queue_open(queue_security_key);
     queue_log = queue_open(queue_log_key);
 
+    // Initialize security state: no pending requests, all stations empty
     pending.pid = 0;
     internal_queue.pid = 0;
     memset(security_stations, 0, sizeof(SecurityStationState) * SECURITY_STATIONS);
 
+    // Main security processing loop: receive requests, assign stations, complete screenings
     while(1) {
         if (capacity == 0) goto reap_stations;
         if (pending.pid) goto try_insert;
+        // Use non-blocking mode if there are pending operations to process
         int no_block = pending.pid + internal_queue.pid != 0 || capacity != initial_capacity;
         if(msgrcv(queue_security, &msg, MSG_SIZE(msg), 1, no_block ? IPC_NOWAIT : 0) == -1) {
             if (errno == EINVAL || errno == EIDRM) break;
@@ -269,7 +318,7 @@ int run_security_manager(const char* ipc_key) {
         pending = msg;
 
     try_insert:
-        // Try to insert
+        // Try to insert internal queue passenger first (frustration mechanism)
         if (internal_queue.pid) {
             if (security_try_insert(security_stations, &internal_queue)) {
                 internal_queue.pid = 0;
@@ -279,6 +328,7 @@ int run_security_manager(const char* ipc_key) {
             }
         }
 
+        // Process pending passenger request (with frustration increment if overtaken)
         if (pending.pid && (!internal_queue.pid || internal_queue.frustration < SECURITY_MAX_FRUSTRATION)) {
             log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Attempting to insert pending passenger_id: %d (gender: %s)",
                         pending.passenger_id, pending.gender == GENDER_MAN ? "MALE" : "FEMALE");
@@ -304,7 +354,7 @@ int run_security_manager(const char* ipc_key) {
         }
     reap_stations:
         usleep(10000);
-        // Clean and notify completed passengers
+        // Check all stations for passengers who have completed security screening
         for (int station = 0; station < SECURITY_STATIONS; station++) {
             if (security_stations[station].usage == 0) continue;
             for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
