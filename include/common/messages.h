@@ -23,6 +23,7 @@ typedef struct RampMessage {
     long pid;             // Passenger PID for response
     int passenger_id;
     int weight;
+    int is_vip;
 } RampMessage;
 
 typedef struct LogMessage {

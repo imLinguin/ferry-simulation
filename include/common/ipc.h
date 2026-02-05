@@ -39,7 +39,7 @@ typedef enum SemStateMutexVariant {
 int queue_create(key_t queue_key);
 int queue_open(key_t queue_key);
 int queue_close(int queue_id);
-void queue_close_if_exists(key_t queue_key);
+int queue_close_if_exists(key_t queue_key);
 
 int sem_create(key_t sem_key, int semaphore_count, unsigned short* initial_values);
 int sem_open(key_t sem_key, int semaphore_count);

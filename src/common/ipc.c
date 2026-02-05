@@ -21,11 +21,12 @@ int queue_close(int queue_id) {
     return msgctl(queue_id, IPC_RMID, NULL);
 }
 
-void queue_close_if_exists(key_t queue_key) {
+int queue_close_if_exists(key_t queue_key) {
     int q = queue_open(queue_key);
     if (q != -1) {
-        queue_close(q);
+        return queue_close(q);
     }
+    return q;
 }
 
 int sem_create(key_t sem_key, int semaphore_count, unsigned short* initial_values) {

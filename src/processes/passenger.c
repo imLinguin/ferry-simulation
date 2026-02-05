@@ -49,6 +49,8 @@ int main(int argc, char** argv) {
 
     if (argc < 3) return 1;
 
+    srand(time(NULL) ^ getpid());
+
     sa.sa_handler = handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
@@ -80,7 +82,7 @@ int main(int argc, char** argv) {
     queue_ramp = queue_open(key_ramp);
     sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
     sem_security = sem_open(sem_security_key, 1);
-    sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
+    sem_ramp_slots = sem_open(sem_ramp_slots_key, 2);
 
     shm_id = shm_open(shm_key);
     shm = shm_attach(shm_id);
@@ -93,7 +95,7 @@ int main(int argc, char** argv) {
     // Initialize passenger ticket
     ticket.state = PASSENGER_CHECKIN;
     ticket.gender = (rand() % 2) + 1;
-    ticket.vip = (rand() % 10 < 2) ? 1 : 0;
+    ticket.vip = ((rand() % 100) < 20) ? 1 : 0;
     ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
 
@@ -114,11 +116,11 @@ int main(int argc, char** argv) {
                 sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
                 break;
             }
-            log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
+            // log_message(log_queue, ROLE, passenger_id, "Bag doesnt meet the limit bag: %d of %d", ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;
-        usleep(100);
+        usleep(100 * 1000);
     }
     shm_detach(shm);
 
@@ -156,20 +158,20 @@ int main(int argc, char** argv) {
     // Wait for ramp slot availability (prevents queue overflow)
     log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
 
-    // TODO: Early return on interrupt here and support VIPs access too
-    sem_wait_single_noundo(sem_ramp_slots, 0);
+    sem_wait_single_noundo(sem_ramp_slots, ticket.vip);
 
     // Request ramp access via message queue
     ramp_message.mtype = ticket.vip ? RAMP_PRIORITY_VIP : RAMP_PRIORITY_REGULAR;
     ramp_message.pid = getpid();
     ramp_message.passenger_id = passenger_id;
     ramp_message.weight = ticket.bag_weight;
+    ramp_message.is_vip = ticket.vip;
 
     log_message(log_queue, ROLE, passenger_id, "Requesting ramp access (VIP: %d)", ticket.vip);
     while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to request ramp access");
-            sem_signal_single_noundo(sem_ramp_slots, 0);
+            sem_signal_single_noundo(sem_ramp_slots, ticket.vip);
             perror("Passenger ramp send error");
             goto cleanup;
         }
@@ -180,7 +182,7 @@ int main(int argc, char** argv) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to receive ramp permission");
             perror("Passenger ramp rcv error");
-            sem_signal_single_noundo(sem_ramp_slots, 0);
+            sem_signal_single_noundo(sem_ramp_slots, ticket.vip);
             goto cleanup;
         }
     }

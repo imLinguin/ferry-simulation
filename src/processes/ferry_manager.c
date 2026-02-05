@@ -39,6 +39,7 @@ int main(int argc, char** argv) {
     key_t log_queue_key;
     
     struct sigaction sa;
+    srand(time(NULL) ^ getpid());
 
     sa.sa_handler = handler;
     sigemptyset(&sa.sa_mask);
@@ -85,7 +86,7 @@ int main(int argc, char** argv) {
     queue_ramp = queue_open(key_ramp);
     sem_state_mutex = sem_open(sem_state_mutex_key, SEM_STATE_MUTEX_VARIANT_COUNT);
     sem_current_ferry = sem_open(sem_current_ferry_key, 1);
-    sem_ramp_slots = sem_open(sem_ramp_slots_key, 1);
+    sem_ramp_slots = sem_open(sem_ramp_slots_key, 2);
     
     if (sem_state_mutex == -1 || sem_current_ferry == -1 || queue_ramp == -1 || sem_ramp_slots == -1) {
         shm_detach(shared_state);
@@ -116,15 +117,24 @@ int main(int argc, char** argv) {
         shared_state->ferries[ferry_id].status = FERRY_BOARDING;
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
         shared_state->ferries[ferry_id].passenger_count = 0;
-        log_message(log_queue, ROLE, ferry_id, "Ferry is now boarding");
+        log_message(log_queue, ROLE, ferry_id, "Ferry is preparing for boarding");
         END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
+
+        // Open gate for boarding
+        time_t boarding_delay_start = time(NULL);
+        int boarding_delay = rand() % FERRY_GATE_MAX_DELAY;
+        log_message(log_queue, ROLE, ferry_id, "Ferry gate will open in %d s", boarding_delay);
+        while (time(NULL) - boarding_delay_start < boarding_delay) {
+            usleep(10 * 1000);
+        }
+        log_message(log_queue, ROLE, ferry_id, "Ferry is open for boarding");
+        sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY_REG);
+        sem_set_noundo(sem_ramp_slots, 1, RAMP_CAPACITY_VIP);
 
         // Wait for boarding to complete or early departure signal
         time_t boarding_start = time(NULL);
         should_depart = 0;
         int usage = 0;
-
-        sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY);
 
         // Handle ramp queue while active
         while (1) {
@@ -139,7 +149,7 @@ int main(int argc, char** argv) {
             if (shared_state->ferries[ferry_id].passenger_count < FERRY_CAPACITY && msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
                     // Passenger leaving ramp
-                    if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, 0); // Release semaphore slot
+                    if (!gate_close) sem_signal_single_noundo(sem_ramp_slots, ramp_msg.is_vip); // Release semaphore slot
                     usage--;
                     START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
                     shared_state->ferries[ferry_id].passenger_count++;
@@ -158,7 +168,10 @@ int main(int argc, char** argv) {
 
             int semval = sem_get_val(sem_ramp_slots, 0);
             // Ensure ramp is empty before departing
-            if (gate_close && !usage && (semval == 0 || semval == RAMP_CAPACITY)) break;
+            if (gate_close && !usage) {
+                log_message(log_queue, ROLE, ferry_id, "Sem usage on gate close: %d", semval);
+                break;
+            }
             
             usleep(10000); // 10ms sleep to avoid busy waiting
         }
@@ -184,12 +197,14 @@ int main(int argc, char** argv) {
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
         time_t travel_start = time(NULL);
         while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
-            usleep(10 * 1000);
+            sleep(1);
+            log_message(log_queue, ROLE, ferry_id, "Traveling: time left: %02d s", FERRY_TRAVEL_TIME - (time(NULL) - travel_start));
         }
         log_message(log_queue, ROLE, ferry_id, "Ferry returning");
         travel_start = time(NULL);
         while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
-            usleep(10 * 1000);
+            sleep(1);
+            log_message(log_queue, ROLE, ferry_id, "Returning: time left: %02d s", FERRY_TRAVEL_TIME - (time(NULL) - travel_start));
         }
         
         // Return

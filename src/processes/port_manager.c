@@ -23,7 +23,7 @@ SharedState* shared_state;
 
 static void handle_signal(int signal) {
     if (signal == SIGINT) {
-        kill(0, SIGUSR2);
+        kill(0, SIGUSR1);
         sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
         shared_state->port_open = 0;
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
     struct sigaction sa;
 
     if (argc < 2) return 1;
+    srand(time(NULL) ^ getpid());
 
     sa.sa_handler = handle_signal;
     sigemptyset(&sa.sa_mask);
@@ -98,7 +99,6 @@ int main(int argc, char** argv) {
     snprintf(passenger_path, sizeof(passenger_path), "%s/passenger", bin_dir);
 
     pid_t ferry_pids[FERRY_COUNT];
-    pid_t passenger_pids[PASSENGER_COUNT];
     pid_t security_manager;
 
     security_manager = fork();
@@ -126,10 +126,10 @@ int main(int argc, char** argv) {
     // Spawn passengers
     for (int i = 0; i < PASSENGER_COUNT; i++) {
         snprintf(passenger_id_arg, sizeof(passenger_id_arg), "%d", i);
-        passenger_pids[i] = fork();
-        if (passenger_pids[i] == -1) {
+        int passpid = fork();
+        if (passpid == -1) {
             perror("Failed to spawn passenger");
-        } else if (passenger_pids[i] == 0) {
+        } else if (passpid == 0) {
             if (execl(passenger_path, passenger_path, argv[1], passenger_id_arg, NULL) == -1) {
                 perror("Failed to exec passenger");
             }
@@ -150,8 +150,8 @@ int main(int argc, char** argv) {
         }
         if (waitpid(0, NULL, WNOHANG) > 0) {
             counter++;
+            continue;
         }
-    loopsleep:
         usleep(10000);
     }
 
@@ -228,6 +228,8 @@ int run_security_manager(const char* ipc_key) {
     SecurityMessage pending;
     SecurityMessage internal_queue;
     struct sigaction sa;
+
+    srand(time(NULL) ^ getpid());
 
     sa.sa_handler = SIG_IGN;
     sigemptyset(&sa.sa_mask);

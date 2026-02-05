@@ -69,6 +69,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    srand(time(NULL) ^ getpid());
 
     // Initialize IPC keys
     queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
@@ -133,10 +134,10 @@ int main(int argc, char **argv) {
     shared_state->port_open = 1;
     shared_state->current_ferry_id = -1;
   
+    
     for (int i = 0; i < FERRY_COUNT; i++) {
         shared_state->ferries[i].ferry_id = i;
-        shared_state->ferries[i].baggage_limit = FERRY_BAGGAGE_LIMIT_MIN + 
-            (rand() % (FERRY_BAGGAGE_LIMIT_MAX - FERRY_BAGGAGE_LIMIT_MIN + 1));
+        shared_state->ferries[i].baggage_limit = FERRY_BAGGAGE_LIMIT_MIN + i * ((FERRY_BAGGAGE_LIMIT_MAX - FERRY_BAGGAGE_LIMIT_MIN) / FERRY_COUNT);
         shared_state->ferries[i].passenger_count = 0;
         shared_state->ferries[i].baggage_weight_total = 0;
         shared_state->ferries[i].status = FERRY_WAITING_IN_QUEUE;
@@ -171,8 +172,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    unsigned short ramp_slots_init = 0;
-    if ((sem_ramp_slots = sem_create(sem_ramp_slots_key, 1, &ramp_slots_init)) == -1) {
+    unsigned short ramp_slots_init[] = {0, 0};
+    if ((sem_ramp_slots = sem_create(sem_ramp_slots_key, 2, ramp_slots_init)) == -1) {
         perror("Failed to create ramp slots semaphore");
         sem_close(sem_state_mutex);
         sem_close(sem_security);
