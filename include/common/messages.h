@@ -21,6 +21,7 @@ typedef struct SecurityMessage {
 typedef struct RampMessage {
     long mtype;           // Priority: 1=exit, 2=VIP, 3=Regular, or PID for response
     long pid;             // Passenger PID for response
+    int approved;
     int passenger_id;
     int weight;
     int is_vip;

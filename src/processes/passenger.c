@@ -122,8 +122,8 @@ int main(int argc, char** argv) {
     ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
                         (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
 
-    log_message(log_queue, ROLE, passenger_id, "Passenger created (gender: %s, VIP: %d, bag_weight: %d)",
-                ticket.gender == GENDER_MAN ? "MALE" : "FEMALE", ticket.vip, ticket.bag_weight);
+    // log_message(log_queue, ROLE, passenger_id, "Passenger created (gender: %s, VIP: %d, bag_weight: %d)",
+    //             ticket.gender == GENDER_MAN ? "MALE" : "FEMALE", ticket.vip, ticket.bag_weight);
     ticket.state = PASSENGER_BAG_CHECK;
     log_message(log_queue, ROLE, passenger_id, "At baggage check");
 
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         if (shm->current_ferry_id != -1) {
-            if (shm->ferries[shm->current_ferry_id].baggage_limit > ticket.bag_weight) {
+            if (shm->ferries[shm->current_ferry_id].baggage_limit >= ticket.bag_weight) {
                 log_message(log_queue, ROLE, passenger_id, "Baggage meets the limit (bag: %d, ferry_limit: %d)",
                             ticket.bag_weight, shm->ferries[shm->current_ferry_id].baggage_limit);
                 sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
@@ -151,7 +151,6 @@ int main(int argc, char** argv) {
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;
-        sleep(1);
     }
     shm_detach(shm);
 
@@ -194,6 +193,7 @@ int main(int argc, char** argv) {
     // Request ramp slot: wait for available capacity (separate slots for VIP and regular)
     log_message(log_queue, ROLE, passenger_id, "Waiting for ramp slot availability");
 
+ramp_entry:
     while(sem_wait_single_nointr_noundo(sem_ramp_slots, ticket.vip) == -1) {
         if (errno == EINTR) { PORT_CLOSED_RETURN; continue; }
         return 1;
@@ -205,6 +205,7 @@ int main(int argc, char** argv) {
     ramp_message.passenger_id = passenger_id;
     ramp_message.weight = ticket.bag_weight;
     ramp_message.is_vip = ticket.vip;
+    ramp_message.approved = 0;
 
     log_message(log_queue, ROLE, passenger_id, "Requesting ramp access (VIP: %d)", ticket.vip);
     while(msgsnd(queue_ramp, &ramp_message, MSG_SIZE(ramp_message), 0) == -1) {
@@ -226,13 +227,12 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!ramp_message.approved) goto ramp_entry;
+
     log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
 
     // Simulate time taken to walk onto the ferry
-    time_t boarding_start = time(NULL);
-    while ((time(NULL) - boarding_start) < PASSENGER_BOARDING_TIME) {
-        usleep(100000);
-    }
+    usleep(PASSENGER_BOARDING_TIME);
 
     // Notify ferry manager that passenger has completed boarding and left ramp
     ramp_message.mtype = RAMP_MESSAGE_EXIT;

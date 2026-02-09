@@ -29,8 +29,8 @@ typedef struct SimulationStats {
 typedef struct SharedState {
     int port_open;
     int current_ferry_id;
-    FerryState ferries[FERRY_COUNT];
     SimulationStats stats;
+    FerryState ferries[];
 } SharedState;
 
 #endif

@@ -47,7 +47,7 @@ int sem_open(key_t sem_key, int semaphore_count);
 int sem_close(int sem_id);
 void sem_close_if_exists(key_t sem_key);
 int sem_get_val(int sem_id, unsigned short sem_num);
-int sem_set_noundo(int sem_id, unsigned short sem_num, int val);
+int sem_signal_noundo(int sem_id, unsigned short sem_num, int val);
 int sem_wait_single_noundo(int sem_id, unsigned short sem_num);
 int sem_wait_single(int sem_id, unsigned short sem_num);
 int sem_wait_single_nointr(int sem_id, unsigned short sem_num);

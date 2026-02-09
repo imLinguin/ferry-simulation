@@ -116,15 +116,16 @@ int sem_get_val(int sem_id, unsigned short sem_num) {
 }
 
 /**
- * Sets a semaphore value without SEM_UNDO flag with EINTR retry.
+ * Signals a semaphore value with specified amount without SEM_UNDO flag with EINTR retry.
  * @param sem_id The semaphore set identifier
  * @param sem_num The semaphore number within the set
- * @param value The new value to set
+ * @param value The value to signal
  * @return 0 on success, -1 on error
  */
-int sem_set_noundo(int sem_id, unsigned short sem_num, int value) {
+int sem_signal_noundo(int sem_id, unsigned short sem_num, int value) {
     int retval;
-    while ((retval = semctl(sem_id, sem_num, SETVAL, value)) == -1) {
+    struct sembuf op = {sem_num, value, 0};
+    while ((retval = semop(sem_id, &op, 1)) == -1) {
         if (errno != EINTR) break;
     }
     return retval;
@@ -182,7 +183,7 @@ int sem_wait_single_nointr(int sem_id, unsigned short sem_num) {
  * @return 0 on success, -1 on error (including EINTR)
  */
 int sem_wait_single_nointr_noundo(int sem_id, unsigned short sem_num) {
-    struct sembuf op = {sem_num, -1, SEM_UNDO};
+    struct sembuf op = {sem_num, -1, 0};
     return semop(sem_id, &op, 1);
 }
 

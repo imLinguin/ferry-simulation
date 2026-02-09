@@ -7,7 +7,7 @@
 typedef struct SecurityStationOccupant {
     long pid;
     int passenger_id;
-    time_t finish_timestamp;
+    struct timespec finish_timestamp;
 } SecurityStationOccupant;
 
 typedef struct SecurityStationState {

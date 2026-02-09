@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     sem_ramp_slots_key = ftok(argv[0], IPC_KEY_SEM_RAMP_SLOTS_ID);
     sem_current_ferry_key = ftok(argv[0], IPC_KEY_SEM_CURRENT_FERRY);
     
-    if (queue_log_key == -1 || shm_key == -1 || queue_security_key == 1 || queue_ramp_key == -1 ||
+    if (queue_log_key == -1 || shm_key == -1 || queue_security_key == -1 || queue_ramp_key == -1 ||
         sem_state_mutex_key == -1 || sem_security_key == -1 || sem_ramp_key == -1 || 
         sem_ramp_slots_key == -1 || sem_current_ferry_key == -1) {
         perror("Failed to initialize IPC keys");
@@ -121,8 +121,9 @@ int main(int argc, char **argv) {
     }
     
     printf("Initializing shm\n");
+    unsigned int ferry_array_size = FERRY_COUNT * sizeof(FerryState);
     // Create shared memory
-    if ((shm_id = shm_create(shm_key, sizeof(SharedState))) == -1) {
+    if ((shm_id = shm_create(shm_key, sizeof(SharedState) + ferry_array_size)) == -1) {
         perror("Failed to create shared memory");
         return 1;
     }

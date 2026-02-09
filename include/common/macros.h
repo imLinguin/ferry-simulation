@@ -10,5 +10,6 @@
     sem_signal_single(sem,sem_num); \
     }
 
+#define TIMESPEC_DIFF(pred, current) ((double)(current.tv_sec - pred.tv_sec) + (current.tv_nsec - pred.tv_nsec) / 1000000000.0)
 
 #endif

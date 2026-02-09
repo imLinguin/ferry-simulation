@@ -29,9 +29,7 @@ static void handle_signal(int signal) {
     if (signal == SIGINT) {
         kill(0, SIGUSR2);
         kill(0, SIGUSR1);
-        sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
         shared_state->port_open = 0;
-        sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
     }
 }
 
@@ -170,14 +168,17 @@ int main(int argc, char** argv) {
     // Monitor child processes: wait for all passengers to complete, then close port
     int counter = 0;
     int ferry_counter = 0;
+    long pid = 0;
     while (counter < PASSENGER_COUNT) {
-        for (int i=0 ;i < FERRY_COUNT;i++) {
-            if (waitpid(ferry_pids[i], NULL, WNOHANG) > 0) {
-                ferry_counter++;
+        if ((pid = waitpid(0, NULL, WNOHANG)) > 0) {
+            for (int i = 0; i < FERRY_COUNT; i++) {
+                if (ferry_pids[i] == pid) {
+                    ferry_counter++;
+                    goto reap;
+                }
             }
-        }
-        if (waitpid(0, NULL, WNOHANG) > 0) {
             counter++;
+    reap:
             continue;
         }
         usleep(10000);
@@ -228,7 +229,8 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
             // Initialize empty station with passenger's gender and assign first slot
             securityStations[station].gender = msg->gender;
             securityStations[station].slots[0].pid = msg->pid;
-            securityStations[station].slots[0].finish_timestamp = time(NULL) + variation;
+            clock_gettime(CLOCK_MONOTONIC, &securityStations[station].slots[0].finish_timestamp);
+            securityStations[station].slots[0].finish_timestamp.tv_nsec += variation;
             securityStations[station].slots[0].passenger_id = msg->passenger_id;
             securityStations[station].usage++;
             found = 1;
@@ -239,7 +241,8 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
             for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
                 if (securityStations[station].slots[slot].pid == 0) {
                     securityStations[station].slots[slot].pid = msg->pid;
-                    securityStations[station].slots[slot].finish_timestamp = time(NULL) + variation;
+                    clock_gettime(CLOCK_MONOTONIC, &securityStations[station].slots[slot].finish_timestamp);
+                    securityStations[station].slots[slot].finish_timestamp.tv_nsec += variation;
                     securityStations[station].slots[slot].passenger_id = msg->passenger_id;
                     securityStations[station].usage++;
                     // Note: Log moved to caller for station tracking
@@ -285,6 +288,7 @@ int run_security_manager(const char* ipc_key) {
     SecurityMessage msg;
     SecurityMessage pending;
     SecurityMessage internal_queue;
+    struct timespec current_time;
     struct sigaction sa;
 
     srand(time(NULL) ^ getpid());
@@ -385,12 +389,13 @@ int run_security_manager(const char* ipc_key) {
         }
     reap_stations:
         usleep(10000);
+        clock_gettime(CLOCK_MONOTONIC, &current_time);
         // Check all stations for passengers who have completed security screening
         for (int station = 0; station < SECURITY_STATIONS; station++) {
             if (security_stations[station].usage == 0) continue;
             for (int slot = 0; slot < SECURITY_STATION_CAPACITY; slot++) {
                 if (security_stations[station].slots[slot].pid != 0
-                    && security_stations[station].slots[slot].finish_timestamp < time(NULL)) {
+                    && TIMESPEC_DIFF(security_stations[station].slots[slot].finish_timestamp, current_time) >= 0) {
                     msg.mtype = security_stations[station].slots[slot].pid;
                     msg.passenger_id = security_stations[station].slots[slot].passenger_id;
                     msg.gender = security_stations[station].gender;
