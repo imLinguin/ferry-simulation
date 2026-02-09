@@ -23,7 +23,8 @@ typedef struct SimulationStats {
     int passengers_boarded;
     int passengers_rejected_baggage;
     int total_ferry_trips;
-    int passengers_screened;
+    int passengers_screened_passed;
+    int passengers_screened_rejected;
 } SimulationStats;
 
 typedef struct SharedState {

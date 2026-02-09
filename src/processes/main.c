@@ -144,8 +144,9 @@ int main(int argc, char **argv) {
     shared_state->stats.passengers_boarded = 0;
     shared_state->stats.passengers_rejected_baggage = 0;
     shared_state->stats.total_ferry_trips = 0;
-    shared_state->stats.passengers_screened = 0;
-    
+    shared_state->stats.passengers_screened_passed = 0;
+    shared_state->stats.passengers_screened_rejected = 0;
+
     for (int i = 0; i < FERRY_COUNT; i++) {
         shared_state->ferries[i].ferry_id = i;
         shared_state->ferries[i].baggage_limit = FERRY_BAGGAGE_LIMIT_MIN + i * ((FERRY_BAGGAGE_LIMIT_MAX - FERRY_BAGGAGE_LIMIT_MIN) / FERRY_COUNT);
@@ -240,7 +241,8 @@ int main(int argc, char **argv) {
     if (shared_state != (void*)-1) {
         printf("\n=== Simulation Statistics ===\n");
         printf("Passengers spawned:                   %d\n", shared_state->stats.passengers_spawned);
-        printf("Passengers screened:                  %d\n", shared_state->stats.passengers_screened);
+        printf("Passengers passed security:           %d\n", shared_state->stats.passengers_screened_passed);
+        printf("Passengers rejected security:         %d\n", shared_state->stats.passengers_screened_rejected);
         printf("Passengers boarded:                   %d\n", shared_state->stats.passengers_boarded);
         printf("Passengers rejected attempts (bag):   %d\n", shared_state->stats.passengers_rejected_baggage);
         printf("Total ferry trips:                    %d\n", shared_state->stats.total_ferry_trips);

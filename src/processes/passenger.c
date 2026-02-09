@@ -168,6 +168,7 @@ int main(int argc, char** argv) {
     security_message.pid = getpid();
     security_message.passenger_id = passenger_id;
     security_message.frustration = 0;
+    security_message.dangerous_weapon = ((rand() % 100) < 30) ? 1 : 0;
     while(msgsnd(queue_security, &security_message, MSG_SIZE(security_message), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to put messege to security queue");
@@ -185,6 +186,10 @@ int main(int argc, char** argv) {
     }
     sem_signal_single(sem_security, 0);
     PORT_CLOSED_RETURN;
+    if (security_message.dangerous_weapon) {
+        log_message(log_queue, ROLE, passenger_id, "Passenger did not pass security.");
+        return 0;
+    }
 
     ticket.state = PASSENGER_BOARDING;
     log_message(log_queue, ROLE, passenger_id, "Passed security, waiting to board (gender: %s)",

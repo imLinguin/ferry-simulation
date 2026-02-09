@@ -232,6 +232,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
             clock_gettime(CLOCK_MONOTONIC, &securityStations[station].slots[0].finish_timestamp);
             securityStations[station].slots[0].finish_timestamp.tv_nsec += variation;
             securityStations[station].slots[0].passenger_id = msg->passenger_id;
+            securityStations[station].slots[0].dangerous = msg->dangerous_weapon;
             securityStations[station].usage++;
             found = 1;
         }
@@ -244,6 +245,7 @@ int security_try_insert(SecurityStationState *securityStations, SecurityMessage 
                     clock_gettime(CLOCK_MONOTONIC, &securityStations[station].slots[slot].finish_timestamp);
                     securityStations[station].slots[slot].finish_timestamp.tv_nsec += variation;
                     securityStations[station].slots[slot].passenger_id = msg->passenger_id;
+                    securityStations[station].slots[slot].dangerous = msg->dangerous_weapon;
                     securityStations[station].usage++;
                     // Note: Log moved to caller for station tracking
                     found = 1;
@@ -388,7 +390,6 @@ int run_security_manager(const char* ipc_key) {
             }
         }
     reap_stations:
-        usleep(10000);
         clock_gettime(CLOCK_MONOTONIC, &current_time);
         // Check all stations for passengers who have completed security screening
         for (int station = 0; station < SECURITY_STATIONS; station++) {
@@ -398,9 +399,15 @@ int run_security_manager(const char* ipc_key) {
                     && TIMESPEC_DIFF(security_stations[station].slots[slot].finish_timestamp, current_time) >= 0) {
                     msg.mtype = security_stations[station].slots[slot].pid;
                     msg.passenger_id = security_stations[station].slots[slot].passenger_id;
+                    msg.dangerous_weapon = security_stations[station].slots[slot].dangerous;
                     msg.gender = security_stations[station].gender;
-
-                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, "Passenger %d passed the security (station: %d, gender: %s)",
+                    char *log;
+                    if (msg.dangerous_weapon) {
+                        log = "Passenger %d did not pass the security (station: %d, gender: %s)";
+                    } else {
+                        log = "Passenger %d passed the security (station: %d, gender: %s)";
+                    }
+                    log_message(queue_log, ROLE_SECURITY_MANAGER, -1, log,
                                 msg.passenger_id, station, msg.gender == GENDER_MAN ? "MALE" : "FEMALE");
                     if (msgsnd(queue_security, &msg, MSG_SIZE(msg), 0)) {
                         perror("Failed to send message back to user");
@@ -408,7 +415,7 @@ int run_security_manager(const char* ipc_key) {
                     
                     // Update screened statistics
                     sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
-                    shared_state->stats.passengers_screened++;
+                    if (msg.dangerous_weapon) shared_state->stats.passengers_screened_rejected++; else shared_state->stats.passengers_screened_passed++;
                     sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
                     
                     security_stations[station].usage--;

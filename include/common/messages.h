@@ -10,6 +10,7 @@ typedef struct SecurityMessage {
     Gender gender;
     long pid;
     int passenger_id;
+    int dangerous_weapon;
     int frustration;
 } SecurityMessage;
 
