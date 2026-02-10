@@ -4,6 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/buildDir"
+SIM_BIN="${1:-$BUILD_DIR/ferry-simulation}"
 
 source "$SCRIPT_DIR/tests.shlib"
 
@@ -37,7 +38,7 @@ export DANGEROUS_ITEM_CHANCE=0
 export VIP_CHANCE=0
 
 log_info "Starting simulation..."
-"$BUILD_DIR/ferry-simulation" &
+"$SIM_BIN" &
 sim_pid=$!
 
 # Wait for simulation to start

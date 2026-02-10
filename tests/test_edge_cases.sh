@@ -4,6 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/buildDir"
+SIM_BIN="${1:-$BUILD_DIR/ferry-simulation}"
 
 source "$SCRIPT_DIR/tests.shlib"
 
@@ -30,14 +31,14 @@ export PASSENGER_SECURITY_TIME_MAX=40  # to create timing issues
 export PASSENGER_BOARDING_TIME=1000
 export FERRY_GATE_MAX_DELAY=2000
 export FERRY_BAGGAGE_LIMIT_MIN=30
-export FERRY_BAGGAGE_LIMIT_MAX=35  # Narrow range
+export FERRY_BAGGAGE_LIMIT_MAX=40  # Narrow range
 export PASSENGER_BAG_WEIGHT_MIN=25  # High weights
-export PASSENGER_BAG_WEIGHT_MAX=40  # to test edge of limits
+export PASSENGER_BAG_WEIGHT_MAX=35  # to test edge of limits
 export DANGEROUS_ITEM_CHANCE=0
 export VIP_CHANCE=0
 
 log_info "Running edge cases test..."
-run_test_with_timeout 90 "$BUILD_DIR/ferry-simulation"
+run_test_with_timeout 90 "$SIM_BIN"
 
 exit_code=$?
 

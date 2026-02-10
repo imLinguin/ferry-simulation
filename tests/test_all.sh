@@ -2,6 +2,9 @@
 # Master test runner - executes all ferry simulation tests
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+BUILD_DIR="$PROJECT_DIR/buildDir"
+SIM_BIN="${1:-$BUILD_DIR/ferry-simulation}"
 
 source "$SCRIPT_DIR/tests.shlib"
 
@@ -46,7 +49,7 @@ for test_script in "${test_scripts[@]}"; do
     chmod +x "$test_path"
     
     # Run test and capture exit code
-    "$test_path"
+    "$test_path" "$SIM_BIN"
     exit_code=$?
     
     if [ $exit_code -eq 0 ]; then

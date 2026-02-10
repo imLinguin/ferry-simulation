@@ -5,6 +5,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/buildDir"
+SIM_BIN="${1:-$BUILD_DIR/ferry-simulation}"
 
 # Source shared library
 source "$SCRIPT_DIR/tests.shlib"
@@ -24,7 +25,7 @@ rm -f "$LOG_FILE"
 
 # Run simulation with test_ramp.sh configuration
 log_info "Running simulation with test_ramp.sh configuration..."
-run_test_with_timeout 90 "$SCRIPT_DIR/test_ramp.sh $BUILD_DIR/ferry-simulation"
+run_test_with_timeout 90 "$SCRIPT_DIR/test_ramp.sh $SIM_BIN"
 
 exit_code=$?
 

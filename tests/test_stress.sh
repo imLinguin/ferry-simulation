@@ -4,6 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_DIR/buildDir"
+SIM_BIN="${1:-$BUILD_DIR/ferry-simulation}"
 
 source "$SCRIPT_DIR/tests.shlib"
 
@@ -40,7 +41,7 @@ log_info "Running stress test with $PASSENGER_COUNT passengers..."
 log_warning "This test may take up to 120 seconds..."
 
 # Use longer timeout for stress test
-run_test_with_timeout 120 "$BUILD_DIR/ferry-simulation"
+run_test_with_timeout 120 "$SIM_BIN"
 
 exit_code=$?
 

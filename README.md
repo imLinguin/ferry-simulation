@@ -65,6 +65,165 @@ The simulation will:
 
 **Output:** All events are logged to `simulation.log` with timestamps.
 
+## Testing
+
+Comprehensive test suite validates correctness, concurrency, timing, and edge case handling.
+
+### Running Tests
+
+All test scripts accept an optional path to the simulation binary. If omitted, they default to `../buildDir/ferry-simulation`.
+
+```bash
+# Run all tests (default binary)
+cd tests && ./test_all.sh
+
+# Run all tests with custom binary path
+cd tests && ./test_all.sh /path/to/ferry-simulation
+
+# Run individual test
+cd tests && ./test_basic_flow.sh
+cd tests && ./test_stress.sh ../buildDir/ferry-simulation
+```
+
+### Test Scripts Summary
+
+| Test Script | Purpose | Passengers | Key Validation |
+|------------|---------|------------|----------------|
+| `test_basic_flow.sh` | Basic functionality | 20 | Complete journey, all passengers accounted |
+| `test_ferry_trips.sh` | Ferry trip count | via test_ramp.sh | Exactly 10 trips with passengers > 0 |
+| `test_passenger_accounting.sh` | Accounting accuracy | 100 | spawned = boarded + rejected |
+| `test_capacity_limits.sh` | Capacity constraints | 200 | Ferry/ramp capacity never exceeded |
+| `test_security_segregation.sh` | Security throughput | 150 | Security station handling |
+| `test_vip_priority.sh` | VIP handling | 100 | VIP passengers get priority |
+| `test_early_departure.sh` | SIGUSR1 signal | 100 | Early departure on signal (~8s, ~13s) |
+| `test_port_closure.sh` | SIGUSR2 signal | 200 | Graceful port closure (~11s) |
+| `test_stress.sh` | High load | 5000 | No deadlocks, high throughput |
+| `test_edge_cases.sh` | Boundary conditions | 50 | Empty ferries, exact capacity |
+
+### Test Script Details
+
+#### Basic Correctness Tests
+
+1. **`test_basic_flow.sh`** — Small passenger count (20), verifies complete passenger journey and basic system functionality.
+
+2. **`test_ferry_trips.sh`** — Runs simulation via `test_ramp.sh` configuration. Validates exactly 10 ferry trips with passengers > 0 and passenger accounting accuracy. **Note:** Requires `test_ramp.sh` to exist in tests directory.
+
+3. **`test_passenger_accounting.sh`** — 100 passengers. Validates: spawned = boarded + rejected_baggage + rejected_security. Ensures no passengers are lost or double-counted.
+
+#### Concurrency Validation Tests
+
+4. **`test_capacity_limits.sh`** — 200 passengers, slower boarding (2ms). Validates ferry capacity and ramp capacity constraints are never exceeded. Tracks max observed concurrency vs configured limits.
+
+5. **`test_security_segregation.sh`** — 150 passengers with longer security times (50-100ms). Validates security station throughput, passenger accounting and capacity. Note: gender segregation requires detailed station logs.
+
+6. **`test_vip_priority.sh`** — 100 passengers, 30% VIP chance. Validates VIP passengers get ramp access and verifies VIP/regular passenger separation in logs.
+
+#### Signal Handling Tests
+
+7. **`test_early_departure.sh`** — Long departure interval (30s). Sends SIGUSR1 to ferry-manager processes after ~8s and ~13s. Validates ferries depart before interval expires.
+
+8. **`test_port_closure.sh`** — 200 passengers. Sends SIGUSR2 to port-manager after ~11s. Validates graceful shutdown and ensures not all passengers board (port closed early).
+
+#### Stress and Edge Cases
+
+9. **`test_stress.sh`** — 5000 passengers, 10 ferries. Fast operations (3-7ms security, 500μs boarding), 10% VIP passengers. Validates no deadlocks (120s timeout) and verifies high throughput (4000+ boarded).
+
+10. **`test_edge_cases.sh`** — Small capacity (10 passengers per ferry), short departure interval, slow security (20-40ms). Validates empty ferry handling and exact capacity matching.
+
+### Shared Test Library (`tests.shlib`)
+
+All test scripts source `tests.shlib` which provides reusable utilities:
+
+| Function | Purpose |
+|----------|---------|
+| `run_test_with_timeout()` | Run simulation with automatic deadlock detection |
+| `count_ferry_trips()` | Count departures with passengers > 0 |
+| `validate_passenger_accounting()` | Verify all passengers accounted for |
+| `validate_ferry_capacity()` | Ensure ferry capacity not exceeded |
+| `validate_ramp_capacity()` | Track max concurrent on ramp |
+| `validate_ramp_empty_on_departure()` | Verify ramp is clear before departure |
+| `check_for_errors()` | Search for errors/segfaults in log |
+| `verify_log_exists()` | Check log file exists and is non-empty |
+| `assert_equals()`, `assert_greater_than()` | Test assertions |
+| `log_info()`, `log_error()`, `log_warning()` | Color-coded logging |
+| `print_test_summary()` | Print pass/fail summary |
+
+### Deadlock Detection
+
+All tests use `run_test_with_timeout()` with automatic process cleanup:
+
+- Default timeout: 60-120 seconds (varies by test)
+- On timeout: kills passenger → ferry-manager → port-manager processes (SIGTERM, then SIGKILL)
+- Returns exit code 124 on timeout
+
+### Log Validation
+
+Tests parse `simulation.log` to validate:
+
+- **Ferry trips**: Count departures where `final_passenger_count > 0`
+- **Passenger states**: Boarded, rejected at baggage, rejected at security
+- **Capacity constraints**: Max passengers per ferry, max concurrent on ramp
+- **Timing**: Ferry departure intervals, travel times
+- **Errors**: Search for error messages, failures, segfaults
+
+Key log patterns:
+```
+Ferry departing (final_passenger_count: N, baggage_total: M)
+Passenger N Boarded successfully
+BAGGAGE_REJECTED - bag: X exceeds ferry_limit: Y
+Granting ramp to passenger N (VIP: 0/1)
+Passenger N left ramp (current_capacity: X/Y)
+Gate closing
+```
+
+### Test Output
+
+Each test provides color-coded output with individual pass/fail assertions, statistics, and a summary:
+
+```
+========================================
+Basic Flow Test
+========================================
+[INFO] Running simulation...
+[INFO] Log file exists and has content
+[INFO] Validating results...
+[INFO] ✓ PASS: Passenger accounting (expected: 20, got: 20)
+[INFO] ✓ PASS: Most passengers boarded (16 > 15)
+[INFO] ✓ PASS: Ferry capacity never exceeded (15 <= 15)
+
+========================================
+Test Summary
+========================================
+Total tests: 5
+Passed: 5
+Failed: 0
+========================================
+All tests passed!
+```
+
+### Extending the Test Suite
+
+To add a new test:
+
+1. Create `test_<name>.sh` in `tests/` directory
+2. Source `tests.shlib` for utilities
+3. Set test configuration (environment variables)
+4. Run simulation with `run_test_with_timeout()`
+5. Validate results using log parsing functions
+6. Use assert functions for validation
+7. Call `print_test_summary()` at the end
+8. Add test to `test_all.sh` array
+9. Make executable: `chmod +x test_<name>.sh`
+
+### Troubleshooting
+
+| Problem | Likely Cause |
+|---------|-------------|
+| Test times out | Possible deadlock in simulation |
+| Passenger accounting fails | Lost passengers or incorrect statistics |
+| Capacity validation fails | Race condition in capacity enforcement |
+| Log file missing | Simulation crashed before creating log |
+
 ## Architecture
 
 ### Process Structure
@@ -126,6 +285,7 @@ typedef struct SecurityMessage {
     Gender gender;      // GENDER_MAN or GENDER_WOMAN
     long pid;           // Passenger process ID
     int passenger_id;   // Passenger identifier
+    int dangerous_weapon; // Whether passenger has dangerous item
     int frustration;    // Overtaken count (0-3)
 } SecurityMessage;
 ```
@@ -158,6 +318,7 @@ msgrcv(queue_security, &security_message, MSG_SIZE(security_message), getpid(), 
 typedef struct RampMessage {
     long mtype;         // 1=exit, 2=VIP, 3=Regular, or PID for response
     long pid;           // Passenger PID
+    int approved;       // Whether boarding was approved
     int passenger_id;   // Passenger identifier
     int weight;         // Baggage weight
     int is_vip;         // VIP status flag
@@ -214,8 +375,8 @@ typedef struct LogMessage {
 typedef struct SharedState {
     int port_open;              // Port open/closed flag
     int current_ferry_id;       // Currently docked ferry (-1 if none)
-    FerryState ferries[FERRY_COUNT];  // All ferry states
     SimulationStats stats;      // Simulation statistics
+    FerryState ferries[];       // All ferry states (flexible array member)
 } SharedState;
 ```
 
@@ -226,7 +387,7 @@ typedef struct FerryState {
     int baggage_limit;          // Max baggage weight per passenger
     int passenger_count;        // Current passenger count
     int baggage_weight_total;   // Total baggage weight
-    FerryStatus status;         // WAITING/BOARDING/DEPARTED/TRAVELING
+    FerryStatus status;         // FERRY_WAITING_IN_QUEUE/FERRY_BOARDING/FERRY_DEPARTED/FERRY_TRAVELING
 } FerryState;
 ```
 
@@ -321,9 +482,9 @@ sem_signal_single(sem_security, 0);
 
 **Operations:**
 ```c
-// Ferry opens ramp (sets capacity)
-sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY_REG);  // Regular slots
-sem_set_noundo(sem_ramp_slots, 1, RAMP_CAPACITY_VIP);  // VIP slots
+// Ferry opens ramp (signals capacity)
+sem_signal_noundo(sem_ramp_slots, 0, ramp_capacity_regular);  // Regular slots
+sem_signal_noundo(sem_ramp_slots, 1, ramp_capacity_vip);      // VIP slots
 
 // Passenger waits for slot
 sem_wait_single_nointr_noundo(sem_ramp_slots, ticket.vip);  // 0 or 1
@@ -362,6 +523,7 @@ All IPC operations use wrapper functions from [ipc.c](src/common/ipc.c) with aut
 - `sem_wait_single()` - Decrement with SEM_UNDO, retry on EINTR ([ipc.c](src/common/ipc.c#L156-L167))
 - `sem_signal_single()` - Increment with SEM_UNDO, retry on EINTR ([ipc.c](src/common/ipc.c#L212-L223))
 - `sem_wait_single_noundo()` - Decrement without SEM_UNDO ([ipc.c](src/common/ipc.c#L137-L147))
+- `sem_signal_noundo()` - Increment by value without SEM_UNDO ([ipc.c](src/common/ipc.c#L125-L135))
 - `sem_signal_single_noundo()` - Increment without SEM_UNDO ([ipc.c](src/common/ipc.c#L195-L205))
 
 **Queue Operations:**
@@ -376,24 +538,36 @@ All IPC operations use wrapper functions from [ipc.c](src/common/ipc.c) with aut
 
 ## Configuration
 
-All simulation parameters are defined in [config.h](include/common/config.h):
+Compile-time constants are defined in [config.h](include/common/config.h):
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `PASSENGER_COUNT` | 50 | Total passengers to spawn |
-| `FERRY_COUNT` | 5 | Number of ferries in rotation |
-| `FERRY_CAPACITY` | 50 | Max passengers per ferry |
 | `SECURITY_STATIONS` | 3 | Number of security checkpoints |
 | `SECURITY_STATION_CAPACITY` | 2 | Max passengers per station |
 | `SECURITY_MAX_FRUSTRATION` | 3 | Max overtakes before priority |
-| `RAMP_CAPACITY_REG` | 3 | Regular passenger ramp slots |
-| `RAMP_CAPACITY_VIP` | 2 | VIP passenger ramp slots |
-| `FERRY_DEPARTURE_INTERVAL` | 15 | Seconds before auto-depart |
-| `FERRY_TRAVEL_TIME` | 30 | One-way travel time (seconds) |
-| `PASSENGER_SECURITY_TIME_MIN` | 2 | Min security screening time |
-| `PASSENGER_SECURITY_TIME_MAX` | 5 | Max security screening time |
-| `FERRY_BAGGAGE_LIMIT_MIN` | 20 | Minimum baggage limit |
-| `FERRY_BAGGAGE_LIMIT_MAX` | 60 | Maximum baggage limit |
+| `LOG_FILE` | `"simulation.log"` | Log file path |
+
+All other simulation parameters are configured via **environment variables** at runtime:
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `PASSENGER_COUNT` | Total passengers to spawn |
+| `FERRY_COUNT` | Number of ferries in rotation |
+| `FERRY_CAPACITY` | Max passengers per ferry |
+| `RAMP_CAPACITY_REG` | Regular passenger ramp slots |
+| `RAMP_CAPACITY_VIP` | VIP passenger ramp slots |
+| `FERRY_DEPARTURE_INTERVAL` | Seconds before auto-depart |
+| `FERRY_TRAVEL_TIME` | One-way travel time (seconds) |
+| `PASSENGER_SECURITY_TIME_MIN` | Min security screening time (ms) |
+| `PASSENGER_SECURITY_TIME_MAX` | Max security screening time (ms) |
+| `PASSENGER_BOARDING_TIME` | Boarding time (μs) |
+| `FERRY_GATE_MAX_DELAY` | Max gate open delay (ms) |
+| `FERRY_BAGGAGE_LIMIT_MIN` | Minimum baggage limit (kg) |
+| `FERRY_BAGGAGE_LIMIT_MAX` | Maximum baggage limit (kg) |
+| `PASSENGER_BAG_WEIGHT_MIN` | Min passenger bag weight (kg) |
+| `PASSENGER_BAG_WEIGHT_MAX` | Max passenger bag weight (kg) |
+| `DANGEROUS_ITEM_CHANCE` | Chance of dangerous item (0-100%) |
+| `VIP_CHANCE` | Chance of VIP status (0-100%) |
 
 ## Synchronization Patterns
 
@@ -434,7 +608,7 @@ sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
 ```c
 // Ferry opens gate
-sem_set_noundo(sem_ramp_slots, 0, RAMP_CAPACITY_REG);
+sem_signal_noundo(sem_ramp_slots, 0, ramp_capacity_regular);
 
 // Passenger acquires slot
 sem_wait_single_nointr_noundo(sem_ramp_slots, is_vip);
