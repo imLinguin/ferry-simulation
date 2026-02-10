@@ -57,7 +57,14 @@ int main(int argc, char** argv) {
     key_t sem_current_ferry_key;
     key_t sem_ramp_slots_key;
     key_t log_queue_key;
-    
+
+    int ferry_capacity;
+    int ferry_gate_delay_max;
+    int ramp_capacity_regular;
+    int ramp_capacity_vip;
+    int ferry_departure_interval;
+    int ferry_travel_time;
+
     struct sigaction sa;
     srand(time(NULL) ^ getpid());
 
@@ -80,7 +87,14 @@ int main(int argc, char** argv) {
     if (argc < 3) return 1;
     
     ferry_id = atoi(argv[2]);
-    
+
+    ferry_capacity = CONFIG_GET_INT("FERRY_CAPACITY");
+    ferry_gate_delay_max = CONFIG_GET_INT("FERRY_GATE_MAX_DELAY");
+    ramp_capacity_regular = CONFIG_GET_INT("RAMP_CAPACITY_REG");
+    ramp_capacity_vip = CONFIG_GET_INT("RAMP_CAPACITY_VIP");
+    ferry_departure_interval = CONFIG_GET_INT("FERRY_DEPARTURE_INTERVAL");
+    ferry_travel_time = CONFIG_GET_INT("FERRY_TRAVEL_TIME");
+
     // Initialize IPC resources: queues, shared memory, and semaphores
     log_queue_key = ftok(argv[1], IPC_KEY_LOG_ID);
     shm_key = ftok(argv[1], IPC_KEY_SHM_ID);
@@ -140,16 +154,16 @@ int main(int argc, char** argv) {
         shared_state->ferries[ferry_id].baggage_weight_total = 0;
         shared_state->ferries[ferry_id].passenger_count = 0;
         log_message(log_queue, ROLE, ferry_id, "Ferry is preparing for boarding (baggage_limit: %d, capacity: %d)",
-                    shared_state->ferries[ferry_id].baggage_limit, FERRY_CAPACITY);
+                    shared_state->ferries[ferry_id].baggage_limit, ferry_capacity);
         END_SEMAPHORE(sem_state_mutex,SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
 
         // Simulate gate opening delay, then open ramp slots for passenger boarding
-        int boarding_delay = rand() % FERRY_GATE_MAX_DELAY;
+        int boarding_delay = rand() % ferry_gate_delay_max;
         log_message(log_queue, ROLE, ferry_id, "Ferry gate will open in %d ms", boarding_delay);
         while (usleep(boarding_delay) == -1) {}
         log_message(log_queue, ROLE, ferry_id, "Ferry is open for boarding");
-        sem_signal_noundo(sem_ramp_slots, 0, RAMP_CAPACITY_REG);
-        sem_signal_noundo(sem_ramp_slots, 1, RAMP_CAPACITY_VIP);
+        sem_signal_noundo(sem_ramp_slots, 0, ramp_capacity_regular);
+        sem_signal_noundo(sem_ramp_slots, 1, ramp_capacity_vip);
 
         // Process boarding: handle ramp queue until departure time or early signal
         time_t boarding_start = time(NULL);
@@ -163,14 +177,14 @@ int main(int argc, char** argv) {
             int gate_close;
             RampMessage ramp_msg;
             gate_close = should_depart ||
-               (time(NULL) - boarding_start) >= FERRY_DEPARTURE_INTERVAL;
+               (time(NULL) - boarding_start) >= ferry_departure_interval;
 
             // Process ramp queue: -RAMP_PRIORITY_REGULAR means receive exit(1), VIP(2), or regular(3) - VIP has priority
             if (msgrcv(queue_ramp, &ramp_msg, MSG_SIZE(ramp_msg), -RAMP_PRIORITY_REGULAR, IPC_NOWAIT) != -1) {
                 ramp_empty = 0;
                 if (ramp_msg.mtype == RAMP_MESSAGE_EXIT) {
                     // Passenger completed boarding and is leaving the ramp area
-                    if (!gate_close && !ramp_cleanup && ((FERRY_CAPACITY - shared_state->ferries[ferry_id].passenger_count) > usage)) sem_signal_single_noundo(sem_ramp_slots, ramp_msg.is_vip); // Release semaphore slot
+                    if (!gate_close && !ramp_cleanup && ((ferry_capacity - shared_state->ferries[ferry_id].passenger_count) > usage)) sem_signal_single_noundo(sem_ramp_slots, ramp_msg.is_vip); // Release semaphore slot
                     usage--;
                     int current_count;
                     START_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_FERRIES_STATE);
@@ -185,9 +199,9 @@ int main(int argc, char** argv) {
                     END_SEMAPHORE(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
                     
                     log_message(log_queue, ROLE, ferry_id, "Passenger %d left ramp (current_capacity: %d/%d)",
-                                ramp_msg.passenger_id, current_count, FERRY_CAPACITY);
+                                ramp_msg.passenger_id, current_count, ferry_capacity);
                 } else {
-                    int available_space = FERRY_CAPACITY - shared_state->ferries[ferry_id].passenger_count - usage;
+                    int available_space = ferry_capacity - shared_state->ferries[ferry_id].passenger_count - usage;
 
                     if (available_space > 0 && !gate_close) {
                         // Grant ramp access to waiting passenger
@@ -198,7 +212,7 @@ int main(int argc, char** argv) {
                     } else {
                         log_message(log_queue, ROLE, ferry_id, "Rejecting passenger %d - ferry full or gate closing (capacity: %d/%d, on_ramp: %d)",
                             ramp_msg.passenger_id, shared_state->ferries[ferry_id].passenger_count, 
-                            FERRY_CAPACITY, usage);
+                            ferry_capacity, usage);
                         ramp_msg.approved = 0;
                     }
                     // Response to specific passenger
@@ -248,15 +262,15 @@ int main(int argc, char** argv) {
         // Travel
         log_message(log_queue, ROLE, ferry_id, "Ferry traveling");
         time_t travel_start = time(NULL);
-        while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
+        while ((time(NULL) - travel_start) < ferry_travel_time) {
             sleep(1);
-            log_message(log_queue, ROLE, ferry_id, "Traveling: time left: %02d s", FERRY_TRAVEL_TIME - (time(NULL) - travel_start));
+            log_message(log_queue, ROLE, ferry_id, "Traveling: time left: %02d s", ferry_travel_time - (time(NULL) - travel_start));
         }
         log_message(log_queue, ROLE, ferry_id, "Ferry returning");
         travel_start = time(NULL);
-        while ((time(NULL) - travel_start) < FERRY_TRAVEL_TIME) {
+        while ((time(NULL) - travel_start) < ferry_travel_time) {
             sleep(1);
-            log_message(log_queue, ROLE, ferry_id, "Returning: time left: %02d s", FERRY_TRAVEL_TIME - (time(NULL) - travel_start));
+            log_message(log_queue, ROLE, ferry_id, "Returning: time left: %02d s", ferry_travel_time - (time(NULL) - travel_start));
         }
         
         // Update ferry state to indicate it's back in queue and ready for next trip

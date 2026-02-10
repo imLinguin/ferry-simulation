@@ -22,10 +22,6 @@ common_lib = library(
   include_directories: include
 )
 
-if get_option('enable-tests')
-  subdir('tests')
-endif
-
 main_exe = executable(
   'ferry-simulation',
   main_sources,

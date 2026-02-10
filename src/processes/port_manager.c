@@ -21,6 +21,11 @@
 int sem_state_mutex;
 SharedState* shared_state;
 
+int ferry_count;
+int passenger_count;
+int passenger_security_time_min;
+int passenger_security_time_max;
+
 /**
  * Signal handler for port manager.
  * SIGINT: Initiates graceful shutdown by notifying all processes and closing the port.
@@ -29,7 +34,7 @@ static void handle_signal(int signal) {
     if (signal == SIGINT) {
         kill(0, SIGUSR2);
         kill(0, SIGUSR1);
-        shared_state->port_open = 0;
+        if (shared_state) shared_state->port_open = 0;
     }
 }
 
@@ -106,6 +111,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    ferry_count = CONFIG_GET_INT("FERRY_COUNT");
+    passenger_count = CONFIG_GET_INT("PASSENGER_COUNT");
+    passenger_security_time_min = CONFIG_GET_INT("PASSENGER_SECURITY_TIME_MIN");
+    passenger_security_time_max = CONFIG_GET_INT("PASSENGER_SECURITY_TIME_MAX");
+
     log_message(log_queue, ROLE, -1, "Port manager starting up");
 
     // Determine executable paths for child processes based on current binary location
@@ -118,7 +128,7 @@ int main(int argc, char** argv) {
     snprintf(ferry_manager_path, sizeof(ferry_manager_path), "%s/ferry-manager", bin_dir);
     snprintf(passenger_path, sizeof(passenger_path), "%s/passenger", bin_dir);
 
-    pid_t ferry_pids[FERRY_COUNT];
+    pid_t ferry_pids[ferry_count];
     pid_t security_manager;
 
     // Spawn security manager process for passenger screening
@@ -131,7 +141,7 @@ int main(int argc, char** argv) {
     }
 
     // Spawn all ferry manager processes (one per ferry)
-    for (int i = 0; i < FERRY_COUNT; i++) {
+    for (int i = 0; i < ferry_count; i++) {
         snprintf(ferry_id_arg, sizeof(ferry_id_arg), "%d", i);
         ferry_pids[i] = fork();
         if (ferry_pids[i] == -1) {
@@ -145,7 +155,7 @@ int main(int argc, char** argv) {
     }
 
     // Spawn all passenger processes
-    for (int i = 0; i < PASSENGER_COUNT; i++) {
+    for (int i = 0; i < passenger_count; i++) {
         snprintf(passenger_id_arg, sizeof(passenger_id_arg), "%d", i);
         int passpid = fork();
         if (passpid == -1) {
@@ -160,7 +170,7 @@ int main(int argc, char** argv) {
 
     // Update spawned passengers count
     sem_wait_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
-    shared_state->stats.passengers_spawned = PASSENGER_COUNT;
+    shared_state->stats.passengers_spawned = passenger_count;
     sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_STATS);
 
     log_message(log_queue, ROLE, -1, "Spawned all ferries and passengers");
@@ -169,9 +179,9 @@ int main(int argc, char** argv) {
     int counter = 0;
     int ferry_counter = 0;
     long pid = 0;
-    while (counter < PASSENGER_COUNT) {
+    while (counter < passenger_count) {
         if ((pid = waitpid(0, NULL, WNOHANG)) > 0) {
-            for (int i = 0; i < FERRY_COUNT; i++) {
+            for (int i = 0; i < ferry_count; i++) {
                 if (ferry_pids[i] == pid) {
                     ferry_counter++;
                     goto reap;
@@ -192,8 +202,8 @@ int main(int argc, char** argv) {
     sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_PORT);
 
     // Wait for all ferries to complete their final trips and exit
-    while (ferry_counter < FERRY_COUNT) {
-        for (int i=0 ;i < FERRY_COUNT; i++) {
+    while (ferry_counter < ferry_count) {
+        for (int i=0 ;i < ferry_count; i++) {
             if (waitpid(ferry_pids[i], NULL, WNOHANG) > 0) {
                 ferry_counter++;
             }
@@ -220,8 +230,8 @@ int main(int argc, char** argv) {
  */
 int security_try_insert(SecurityStationState *securityStations, SecurityMessage *msg) {
     int found = 0;
-    int variation = (rand() % (PASSENGER_SECURITY_TIME_MAX - PASSENGER_SECURITY_TIME_MIN + 1)) + PASSENGER_SECURITY_TIME_MIN;
-
+    int variation = (rand() % (passenger_security_time_max - passenger_security_time_min + 1)) + passenger_security_time_min;
+    variation = variation * 1000000;
     // Search for available security station matching passenger's gender
     for (int station = 0; station < SECURITY_STATIONS; station++) {
         // First look if the station is not occupied

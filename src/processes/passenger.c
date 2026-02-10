@@ -64,6 +64,12 @@ int main(int argc, char** argv) {
     key_t sem_ramp_slots_key;
     key_t shm_key;
 
+    int passenger_bag_min;
+    int passenger_bag_max;
+    int passenger_boarding_time;
+    int vip_chance;
+    int dangerous_item_chance;
+
     struct sigaction sa;
 
     if (argc < 3) return 1;
@@ -85,6 +91,12 @@ int main(int argc, char** argv) {
         perror("Failed to setup signal handler");
         return 1;
     }
+
+    passenger_bag_min = CONFIG_GET_INT("PASSENGER_BAG_WEIGHT_MIN");
+    passenger_bag_max = CONFIG_GET_INT("PASSENGER_BAG_WEIGHT_MAX");
+    passenger_boarding_time = CONFIG_GET_INT("PASSENGER_BOARDING_TIME");
+    dangerous_item_chance = CONFIG_GET_INT("DANGEROUS_ITEM_CHANCE");
+    vip_chance = CONFIG_GET_INT("VIP_CHANCE");
 
     passenger_id = atoi(argv[2]);
 
@@ -118,9 +130,9 @@ int main(int argc, char** argv) {
     // Generate passenger attributes: gender, VIP status, and baggage weight
     ticket.state = PASSENGER_CHECKIN;
     ticket.gender = (rand() % 2) + 1;
-    ticket.vip = ((rand() % 100) < 20) ? 1 : 0;
-    ticket.bag_weight = PASSENGER_BAG_WEIGHT_MIN +
-                        (rand() % (PASSENGER_BAG_WEIGHT_MAX - PASSENGER_BAG_WEIGHT_MIN + 1));
+    ticket.vip = ((rand() % 100) < vip_chance) ? 1 : 0;
+    ticket.bag_weight = passenger_bag_min +
+                        (rand() % (passenger_bag_max - passenger_bag_min + 1));
 
     // log_message(log_queue, ROLE, passenger_id, "Passenger created (gender: %s, VIP: %d, bag_weight: %d)",
     //             ticket.gender == GENDER_MAN ? "MALE" : "FEMALE", ticket.vip, ticket.bag_weight);
@@ -168,7 +180,7 @@ int main(int argc, char** argv) {
     security_message.pid = getpid();
     security_message.passenger_id = passenger_id;
     security_message.frustration = 0;
-    security_message.dangerous_weapon = ((rand() % 100) < 30) ? 1 : 0;
+    security_message.dangerous_weapon = ((rand() % 100) < dangerous_item_chance) ? 1 : 0;
     while(msgsnd(queue_security, &security_message, MSG_SIZE(security_message), 0) == -1) {
         if (errno != EINTR) {
             log_message(log_queue, ROLE, passenger_id, "[ERROR] Failed to put messege to security queue");
@@ -237,7 +249,7 @@ ramp_entry:
     log_message(log_queue, ROLE, passenger_id, "Boarding ferry");
 
     // Simulate time taken to walk onto the ferry
-    usleep(PASSENGER_BOARDING_TIME);
+    usleep(passenger_boarding_time);
 
     // Notify ferry manager that passenger has completed boarding and left ramp
     ramp_message.mtype = RAMP_MESSAGE_EXIT;

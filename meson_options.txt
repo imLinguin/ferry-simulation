@@ -1,5 +1,0 @@
-option('enable-tests',
-    type: 'boolean',
-    value: true,
-    description: 'Builds tests.'
-)

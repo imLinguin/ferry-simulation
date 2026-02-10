@@ -75,6 +75,20 @@ int main(int argc, char **argv) {
 
     srand(time(NULL) ^ getpid());
 
+    if (!getenv("PASSENGER_COUNT") || !getenv("FERRY_COUNT") || !getenv("FERRY_CAPACITY") ||
+        !getenv("RAMP_CAPACITY_REG") || !getenv("RAMP_CAPACITY_VIP") || !getenv("FERRY_DEPARTURE_INTERVAL") ||
+        !getenv("FERRY_TRAVEL_TIME") || !getenv("PASSENGER_SECURITY_TIME_MIN") || !getenv("PASSENGER_SECURITY_TIME_MAX") ||
+        !getenv("PASSENGER_BOARDING_TIME") || !getenv("FERRY_GATE_MAX_DELAY") || !getenv("FERRY_BAGGAGE_LIMIT_MIN") ||
+        !getenv("FERRY_BAGGAGE_LIMIT_MAX") || !getenv("PASSENGER_BAG_WEIGHT_MIN") || !getenv("PASSENGER_BAG_WEIGHT_MAX") ||
+        !getenv("DANGEROUS_ITEM_CHANCE") || !getenv("VIP_CHANCE")) {
+        printf("Config is not setup properly");
+        return 1;
+    }
+
+    int ferry_count = CONFIG_GET_INT("FERRY_COUNT");
+    int ferry_baggage_limit_min = CONFIG_GET_INT("FERRY_BAGGAGE_LIMIT_MIN");
+    int ferry_baggage_limit_max = CONFIG_GET_INT("FERRY_BAGGAGE_LIMIT_MAX");
+
     // Initialize IPC keys
     queue_log_key = ftok(argv[0], IPC_KEY_LOG_ID);
     queue_security_key = ftok(argv[0], IPC_KEY_QUEUE_SECURITY_ID);
@@ -121,7 +135,7 @@ int main(int argc, char **argv) {
     }
     
     printf("Initializing shm\n");
-    unsigned int ferry_array_size = FERRY_COUNT * sizeof(FerryState);
+    unsigned int ferry_array_size = ferry_count * sizeof(FerryState);
     // Create shared memory
     if ((shm_id = shm_create(shm_key, sizeof(SharedState) + ferry_array_size)) == -1) {
         perror("Failed to create shared memory");
@@ -147,9 +161,9 @@ int main(int argc, char **argv) {
     shared_state->stats.passengers_screened_passed = 0;
     shared_state->stats.passengers_screened_rejected = 0;
 
-    for (int i = 0; i < FERRY_COUNT; i++) {
+    for (int i = 0; i < ferry_count; i++) {
         shared_state->ferries[i].ferry_id = i;
-        shared_state->ferries[i].baggage_limit = FERRY_BAGGAGE_LIMIT_MIN + i * ((FERRY_BAGGAGE_LIMIT_MAX - FERRY_BAGGAGE_LIMIT_MIN) / FERRY_COUNT);
+        shared_state->ferries[i].baggage_limit = ferry_baggage_limit_min + i * ((ferry_baggage_limit_max - ferry_baggage_limit_min) / ferry_count);
         shared_state->ferries[i].passenger_count = 0;
         shared_state->ferries[i].baggage_weight_total = 0;
         shared_state->ferries[i].status = FERRY_WAITING_IN_QUEUE;
