@@ -52,7 +52,7 @@ The build process generates the following executables in `buildDir/`:
 ## Running the Simulation
 
 ```bash
-./buildDir/ferry-simulation
+./run.sh ./buildDir/ferry-simulation
 ```
 
 The simulation will:
