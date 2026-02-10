@@ -34,13 +34,7 @@ This project uses the **Meson** build system.
    ```bash
    meson compile -C buildDir
    ```
-
-3. **Run tests (optional):**
-   ```bash
-   meson setup buildDir -Denable-tests=true
-   meson test -C buildDir
-   ```
-
+   
 ### Build Outputs
 
 The build process generates the following executables in `buildDir/`:
