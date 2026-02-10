@@ -14,26 +14,24 @@ The simulation demonstrates advanced IPC concepts including message queues, shar
 
 ## Building the Project
 
-This project uses the **Meson** build system.
+This project uses a **Makefile** for building.
 
 ### Prerequisites
 
 - GCC or compatible C compiler
-- Meson build system (>= 1.3.0)
-- Ninja build tool
+- GNU Make
 - Python 3 (for tests)
 
 ### Build Instructions
 
-1. **Configure the build directory:**
-   ```bash
-   meson setup buildDir
-   ```
+```bash
+make
+```
 
-2. **Compile the project:**
-   ```bash
-   meson compile -C buildDir
-   ```
+To rebuild from scratch:
+```bash
+make clean && make
+```
    
 ### Build Outputs
 

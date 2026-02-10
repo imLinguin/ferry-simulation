@@ -12,7 +12,7 @@ typedef enum Role {
     ROLE_SECURITY_MANAGER
 } Role;
 
-char* ROLE_NAMES[] = {
+static const char* ROLE_NAMES[] = {
     "PASSENGER",
     "PORT_MANAGER",
     "FERRY_MANAGER",

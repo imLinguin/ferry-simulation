@@ -1,2 +1,0 @@
-subdir('common')
-subdir('processes')
