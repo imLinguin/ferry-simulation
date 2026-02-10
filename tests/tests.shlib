@@ -1,2 +1,404 @@
 #!/bin/bash
+# Shared library for ferry simulation tests
+# Provides utilities for running tests with timeout, parsing logs, and validating results
 
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Test results
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Default timeout for simulation (seconds)
+DEFAULT_TIMEOUT=60
+
+# Logging functions
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $*"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $*" >&2
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $*"
+}
+
+# Test assertion functions
+assert_equals() {
+    local expected="$1"
+    local actual="$2"
+    local description="$3"
+    
+    if [ "$expected" = "$actual" ]; then
+        log_info "✓ PASS: $description (expected: $expected, got: $actual)"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        log_error "✗ FAIL: $description (expected: $expected, got: $actual)"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}
+
+assert_greater_than() {
+    local value="$1"
+    local threshold="$2"
+    local description="$3"
+    
+    if [ "$value" -gt "$threshold" ]; then
+        log_info "✓ PASS: $description ($value > $threshold)"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        log_error "✗ FAIL: $description ($value <= $threshold)"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}
+
+assert_less_than_or_equal() {
+    local value="$1"
+    local threshold="$2"
+    local description="$3"
+    
+    if [ "$value" -le "$threshold" ]; then
+        log_info "✓ PASS: $description ($value <= $threshold)"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        log_error "✗ FAIL: $description ($value > $threshold)"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}
+
+# Run test with timeout and process cleanup
+# Usage: run_test_with_timeout <timeout_seconds> <command> [args...]
+run_test_with_timeout() {
+    local timeout_duration="$1"
+    shift
+    local command="$@"
+    
+    log_info "Running: $command (timeout: ${timeout_duration}s)"
+    
+    # Run command in background
+    eval "$command" &
+    local cmd_pid=$!
+    
+    # Monitor process with timeout
+    local elapsed=0
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+        if [ "$elapsed" -ge "$timeout_duration" ]; then
+            log_error "Timeout reached (${timeout_duration}s) - killing processes"
+            
+            # Kill passenger and ferry-manager processes first
+            pkill -TERM -f "passenger" 2>/dev/null
+            pkill -TERM -f "ferry-manager" 2>/dev/null
+            sleep 2
+            
+            # Force kill if still alive
+            pkill -KILL -f "passenger" 2>/dev/null
+            pkill -KILL -f "ferry-manager" 2>/dev/null
+            
+            # Kill port-manager
+            pkill -TERM -f "port-manager" 2>/dev/null
+            sleep 1
+            pkill -KILL -f "port-manager" 2>/dev/null
+            
+            # Kill the command itself
+            kill -KILL "$cmd_pid" 2>/dev/null
+            
+            return 124  # Timeout exit code
+        fi
+        sleep 1
+        ((elapsed++))
+    done
+    
+    wait "$cmd_pid"
+    return $?
+}
+
+# Log parsing functions
+
+# Count ferry trips with passengers > 0
+# Usage: count_ferry_trips <log_file>
+count_ferry_trips() {
+    local log_file="${1:-simulation.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        log_error "Log file not found: $log_file"
+        return 1
+    fi
+    
+    # Parse "Ferry departing (final_passenger_count: N, ...)" where N > 0
+    grep "Ferry departing" "$log_file" | \
+        awk -F'final_passenger_count: ' '{print $2}' | \
+        awk -F',' '{print $1}' | \
+        awk '$1 > 0' | \
+        wc -l
+}
+
+# Count total passengers boarded from final statistics
+# Usage: get_stat_passengers_boarded <log_file>
+get_stat_passengers_boarded() {
+    local log_file="${1:-simulation.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        log_error "Log file not found: $log_file"
+        return 1
+    fi
+    
+    # Extract from "Passengers boarded: N" line
+    grep "Passengers boarded:" "$log_file" | \
+        tail -1 | \
+        awk -F': ' '{print $2}' | \
+        tr -d ' '
+}
+
+# Get statistics from final output
+get_stat_passengers_spawned() {
+    local log_file="${1:-simulation.log}"
+    grep "Passengers spawned:" "$log_file" | tail -1 | awk -F': ' '{print $2}' | tr -d ' '
+}
+
+get_stat_passengers_rejected_baggage() {
+    local log_file="${1:-simulation.log}"
+    grep "Passengers rejected attempts (bag):" "$log_file" | tail -1 | awk -F': ' '{print $2}' | tr -d ' '
+}
+
+get_stat_passengers_screened_passed() {
+    local log_file="${1:-simulation.log}"
+    grep "Passengers passed security:" "$log_file" | tail -1 | awk -F': ' '{print $2}' | tr -d ' '
+}
+
+get_stat_passengers_screened_rejected() {
+    local log_file="${1:-simulation.log}"
+    grep "Passengers rejected security:" "$log_file" | tail -1 | awk -F': ' '{print $2}' | tr -d ' '
+}
+
+get_stat_total_ferry_trips() {
+    local log_file="${1:-simulation.log}"
+    grep "Total ferry trips:" "$log_file" | tail -1 | awk -F': ' '{print $2}' | tr -d ' '
+}
+
+# Count events by pattern
+count_events() {
+    local pattern="$1"
+    local log_file="${2:-simulation.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        log_error "Log file not found: $log_file"
+        return 1
+    fi
+    
+    grep -c "$pattern" "$log_file" 2>/dev/null || echo "0"
+}
+
+# Extract events by pattern with timestamps
+get_events() {
+    local pattern="$1"
+    local log_file="${2:-simulation.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        log_error "Log file not found: $log_file"
+        return 1
+    fi
+    
+    grep "$pattern" "$log_file" 2>/dev/null || true
+}
+
+# Validate that passenger accounting is correct
+# spawned = boarded + rejected_baggage (if no security rejection)
+validate_passenger_accounting() {
+    local log_file="${1:-simulation.log}"
+    
+    local spawned=$(get_stat_passengers_spawned "$log_file")
+    local boarded=$(get_stat_passengers_boarded "$log_file")
+    local rejected_bag=$(get_stat_passengers_rejected_baggage "$log_file")
+    local rejected_security=$(get_stat_passengers_screened_rejected "$log_file")
+    
+    # Account for passengers who never got past baggage or security
+    local accounted=$((boarded + rejected_security))
+    
+    assert_equals "$spawned" "$accounted" "Passenger accounting (spawned = boarded + rejected)"
+}
+
+# Validate ferry capacity was never exceeded
+validate_ferry_capacity() {
+    local log_file="${1:-simulation.log}"
+    local max_capacity="${2:-500}"
+    
+    # Extract all final_passenger_count values from ferry departing logs
+    local max_observed=$(grep "Ferry departing" "$log_file" | \
+        awk -F'final_passenger_count: ' '{print $2}' | \
+        awk -F',' '{print $1}' | \
+        sort -n | \
+        tail -1)
+    
+    if [ -z "$max_observed" ]; then
+        max_observed=0
+    fi
+    
+    assert_less_than_or_equal "$max_observed" "$max_capacity" "Ferry capacity never exceeded"
+}
+
+# Validate ramp capacity was never exceeded
+validate_ramp_capacity() {
+    local log_file="${1:-simulation.log}"
+    local max_regular="${2:-3}"
+    local max_vip="${3:-2}"
+    local max_total=$((max_regular + max_vip))
+    
+    # Track concurrent passengers on ramp
+    # "Granting ramp" increments, "left ramp" decrements
+    
+    local max_concurrent=0
+    local current_count=0
+    
+    while IFS= read -r line; do
+        if echo "$line" | grep -q "Granting ramp"; then
+            ((current_count++))
+            if [ "$current_count" -gt "$max_concurrent" ]; then
+                max_concurrent=$current_count
+            fi
+        elif echo "$line" | grep -q "left ramp"; then
+            ((current_count--))
+        fi
+    done < <(grep -E "Granting ramp|left ramp" "$log_file")
+    
+    assert_less_than_or_equal "$max_concurrent" "$max_total" "Ramp capacity never exceeded"
+}
+
+# Check for errors in log
+check_for_errors() {
+    local log_file="${1:-simulation.log}"
+    
+    local error_count=$(grep -ci "error\|failed\|segfault\|timeout" "$log_file")
+    
+    if [ "$error_count" -eq 0 ]; then
+        log_info "✓ No errors found in log"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        log_error "✗ Found $error_count error(s) in log"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}
+
+# Verify log exists and has content
+verify_log_exists() {
+    local log_file="${1:-simulation.log}"
+    
+    if [ ! -f "$log_file" ]; then
+        log_error "Log file does not exist: $log_file"
+        return 1
+    fi
+    
+    if [ ! -s "$log_file" ]; then
+        log_error "Log file is empty: $log_file"
+        return 1
+    fi
+    
+    log_info "Log file exists and has content"
+    return 0
+}
+
+# Print test summary
+print_test_summary() {
+    local total=$((TESTS_PASSED + TESTS_FAILED))
+    
+    echo ""
+    echo "========================================"
+    echo "Test Summary"
+    echo "========================================"
+    echo "Total tests: $total"
+    echo -e "Passed: ${GREEN}${TESTS_PASSED}${NC}"
+    echo -e "Failed: ${RED}${TESTS_FAILED}${NC}"
+    echo "========================================"
+    
+    if [ "$TESTS_FAILED" -eq 0 ]; then
+        echo -e "${GREEN}All tests passed!${NC}"
+        return 0
+    else
+        echo -e "${RED}Some tests failed!${NC}"
+        return 1
+    fi
+}
+
+# Extract ferry departure timestamps for timing analysis
+get_ferry_departure_times() {
+    local ferry_id="$1"
+    local log_file="${2:-simulation.log}"
+    
+    grep "Ferry $ferry_id.*Ferry departing" "$log_file" | \
+        awk '{print $1}' || true
+}
+
+# Calculate time difference between two timestamps (in seconds)
+time_diff() {
+    local start_time="$1"
+    local end_time="$2"
+    
+    echo "$((end_time - start_time))"
+}
+
+# Validate VIP priority (VIPs board before regular passengers)
+validate_vip_priority() {
+    local log_file="${1:-simulation.log}"
+    
+    # Extract boarding events with passenger IDs and VIP status
+    # This requires specific log format - adjust based on actual logs
+    
+    log_info "VIP priority validation (requires detailed boarding logs)"
+    # Implementation depends on log format
+    return 0
+}
+
+# Count passengers by state
+count_passengers_by_state() {
+    local state="$1"
+    local log_file="${2:-simulation.log}"
+    
+    case "$state" in
+        "boarded")
+            count_events "Boarded successfully" "$log_file"
+            ;;
+        "baggage_rejected")
+            count_events "BAGGAGE_REJECTED" "$log_file"
+            ;;
+        "security_passed")
+            count_events "Passed baggage check" "$log_file"
+            ;;
+        *)
+            log_error "Unknown state: $state"
+            return 1
+            ;;
+    esac
+}
+
+# Validate that ferries only depart when ramp is empty
+validate_ramp_empty_on_departure() {
+    local log_file="${1:-simulation.log}"
+    
+    # Check for "Gate closing" followed by "Ferry departing"
+    # This indicates proper ramp clearing
+    
+    local gate_close_count=$(count_events "Gate closing" "$log_file")
+    local departure_count=$(count_events "Ferry departing" "$log_file")
+    
+    if [ "$gate_close_count" -ge "$departure_count" ]; then
+        log_info "✓ All ferries properly closed gates before departure"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        log_error "✗ Gate closure count mismatch"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}

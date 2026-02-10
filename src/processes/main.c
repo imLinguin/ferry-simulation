@@ -234,7 +234,7 @@ int main(int argc, char **argv) {
         queue_close(log_queue_id);
         return 1;
     } else if (logger_pid == 0) {
-        return logger_loop(log_queue_id);
+        return logger_loop(log_queue_id, shm_id);
     }
 
     // Initialize port manager process
@@ -249,20 +249,6 @@ int main(int argc, char **argv) {
         return 0;
     }
     waitpid(manager_pid, NULL, 0);
-    
-    // Print final statistics
-    shared_state = (SharedState*)shm_attach(shm_id);
-    if (shared_state != (void*)-1) {
-        printf("\n=== Simulation Statistics ===\n");
-        printf("Passengers spawned:                   %d\n", shared_state->stats.passengers_spawned);
-        printf("Passengers passed security:           %d\n", shared_state->stats.passengers_screened_passed);
-        printf("Passengers rejected security:         %d\n", shared_state->stats.passengers_screened_rejected);
-        printf("Passengers boarded:                   %d\n", shared_state->stats.passengers_boarded);
-        printf("Passengers rejected attempts (bag):   %d\n", shared_state->stats.passengers_rejected_baggage);
-        printf("Total ferry trips:                    %d\n", shared_state->stats.total_ferry_trips);
-        printf("=============================\n\n");
-        shm_detach(shared_state);
-    }
     
     queue_close_if_exists(queue_log_key);
     waitpid(logger_pid, NULL, 0);
@@ -281,7 +267,7 @@ int main(int argc, char **argv) {
 }
 
 
-int logger_loop(int queue_id) {
+int logger_loop(int queue_id, int shm_id) {
     FILE* log_file;
     LogMessage msg;
     char time_buf[255] = "";
@@ -334,6 +320,28 @@ int logger_loop(int queue_id) {
             printf("%s [%s_%04d] %s\033[0m\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
             fprintf(log_file, "%s [%s_%04d] %s\n", time_buf, ROLE_NAMES[msg.mtype-1], msg.identifier, msg.message);
         }
+    }
+
+    // Print final statistics
+    SharedState* shared_state = (SharedState*)shm_attach(shm_id);
+    if (shared_state != (void*)-1) {
+        printf("\n=== Simulation Statistics ===\n");
+        printf("Passengers spawned:                   %d\n", shared_state->stats.passengers_spawned);
+        printf("Passengers passed security:           %d\n", shared_state->stats.passengers_screened_passed);
+        printf("Passengers rejected security:         %d\n", shared_state->stats.passengers_screened_rejected);
+        printf("Passengers boarded:                   %d\n", shared_state->stats.passengers_boarded);
+        printf("Passengers rejected attempts (bag):   %d\n", shared_state->stats.passengers_rejected_baggage);
+        printf("Total ferry trips:                    %d\n", shared_state->stats.total_ferry_trips);
+        printf("=============================\n\n");
+        fprintf(log_file, "\n=== Simulation Statistics ===\n");
+        fprintf(log_file, "Passengers spawned:                   %d\n", shared_state->stats.passengers_spawned);
+        fprintf(log_file, "Passengers passed security:           %d\n", shared_state->stats.passengers_screened_passed);
+        fprintf(log_file, "Passengers rejected security:         %d\n", shared_state->stats.passengers_screened_rejected);
+        fprintf(log_file, "Passengers boarded:                   %d\n", shared_state->stats.passengers_boarded);
+        fprintf(log_file, "Passengers rejected attempts (bag):   %d\n", shared_state->stats.passengers_rejected_baggage);
+        fprintf(log_file, "Total ferry trips:                    %d\n", shared_state->stats.total_ferry_trips);
+        fprintf(log_file, "=============================\n\n");
+        shm_detach(shared_state);
     }
 
     fflush(log_file);

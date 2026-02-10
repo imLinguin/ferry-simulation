@@ -163,6 +163,7 @@ int main(int argc, char** argv) {
         }
         sem_signal_single(sem_state_mutex, SEM_STATE_MUTEX_VARIANT_CURRENT_FERRY);
         PORT_CLOSED_RETURN;
+        usleep(10000);
     }
     shm_detach(shm);
 
